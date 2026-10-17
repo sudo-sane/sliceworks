@@ -37,3 +37,7 @@ In the **lite profile** one session holds levels 1 and 2 at once; the Stop hook 
 **Efficiency reviewer.** Persistent project memory, writes only under the retros directory. Once per increment reads telemetry and friction notes and writes at most three proposals ([improvement loop](09-metrics-and-improvement.md)).
 
 There is no process-manager chat, no domain-lead chats, no preparation chat.
+
+## Read-only roles write their own outputs
+
+A read-only role (code reviewer, named-risk reviewer, brief drafter, efficiency reviewer, contract author) writes its full output to its own directory instead of passing it through the coordinator's context: reviews and incidents under `<state-dir>/reviews/` and `<state-dir>/incidents/`, brief drafts under `<state-dir>/slices/drafts/`, retrospectives under `<state-dir>/retros/`, contracts under `<state-dir>/contracts/`. A per-role PreToolUse hook allows Markdown files under exactly those directories of the main checkout and refuses everything else, including worktree copies. The role returns only its verdict, the file path and at most ten lines; the coordinator promotes drafts and sends review files to writers as FINDINGS. State files, tickets and promoted briefs stay coordinator-only, because they carry decisions. Why: re-typing reports and long briefs was the largest single drain on the coordinator's context in the first field run.
