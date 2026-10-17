@@ -113,3 +113,34 @@ Under stream mode reviewers also ran the database-free tests themselves. Encoura
 - The per-test bisect and the watermark tag are untested in production use.
 
 The project will report merge latency, obligation closure and the first escaped regression (if any) after its first week. That is the point at which P1–P3 should be decided for the package.
+
+## 5. Addendum 2026-10-18: the coordinator drifted back to gating
+
+What happened. The first stream cycle ran (partial results, two red areas). The coordinator then held merges and dispatch and reported cycle results while it waited for the next cycle. Four slices could start; one of ten writer slots was busy. This happened twice within hours of the owner's direction, and the second time took a binding owner correction (the project's B-310): the stream never gates anything, every free slot is filled, merges happen on review.
+
+Why the proposals above did not prevent it:
+
+- They change the tooling (P1–P3) and measure the outcome (P11), but the coordinator's per-turn loop still reads gate mode. The resume skill's last paragraph, which the coordinator runs on every candidate, says "read the T1 result line … merge … run T2 in the background". Method chapter 5 says "Review never runs before T1 is green". Chapter 6 says "A candidate merges as soon as T1 is green" and "A T2 failure reverts the merge". The host instruction files said the opposite, but the coordinator follows the skill it is executing.
+- Chapter 10 says "the run never idles waiting for a person". It says nothing about waiting for a test, so waiting for a test looked legitimate.
+- The ready detector printed `READY` lines and a free-slot count, but nothing marked the combination as an error. P11 measures "writer idle time on tests", which misses idle slots caused by the coordinator itself.
+
+### P13 Never wait on the stream; an idle slot is an incident (high)
+
+- **Ready detector:** print `IDLE <n> free writer slots with ready work: brief and dispatch <ids>` whenever free slots and ready slices coexist. The wake timer prints it, and the dashboard shows it as a red marker beside "could start now". The wake turn acts on `IDLE` before `STALL`, `STALE` and `READY`. The project now does this in its `next-ready.py`, `wake.sh` and dashboard.
+- **Chapter 10:** "The run never idles waiting for a person **or a test**." In stream mode no test result is a precondition for dispatch, review or merge. Only release acts (deploy, seal, demo, acceptance) read the watermark.
+- **Gate-mode texts under the test-mode switch (extends P1).** These must read the configured mode, not restate T1 or T2:
+  - method 02 (reviewer input);
+  - method 05:21;
+  - method 06:5, 06:26 and 06:28;
+  - method 07:8 (the CANDIDATE shape);
+  - method 12 (the "Candidate" entry);
+  - the resume skill's per-candidate paragraph and its step 6;
+  - the refocus skill's step 1;
+  - the code-reviewer, named-risk-reviewer and slice-implementer profiles.
+
+  A T0 check in the package should fail when stream mode is on and any of these still names T1 or T2 as a gate.
+- **The per-candidate loop in stream mode:** review, merge, file obligations, re-dispatch. A stream failure becomes a fix ticket, never a pause. A coordinator's status line leads with merges, busy and free slots, and open tickets. Stream results take at most one line, and only when something failed.
+- **Recovery and handover template:** a next action may not be preconditioned on a stream cycle, except for release acts. "Wait for cycle N" is not a valid next action.
+- **P11 measure renamed:** "writer-slot idle minutes while a slice was ready", whatever the cause. It is alerted at every wake from the `IDLE` line. Raise P11 to high.
+
+Evidence still missing for P13: whether the `IDLE` line, by itself, keeps the slots full across a compaction and a coordinator handover.
