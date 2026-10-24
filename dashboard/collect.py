@@ -170,9 +170,30 @@ def state_md(text: str) -> dict:
     }
 
 
+INC_HEADING = re.compile(r"^## Increment (\d+): (.+)$", re.M)
+INC_LIKE = re.compile(r"^#{1,6}\s*Increments?\b.*$", re.M | re.I)
+
+
+def backlog_unparsed(text: str) -> list[str]:
+    """Headings that name increments but are not `## Increment <n>: <title>` (a range such as `## Increments 2 to 5`,
+    a missing title, another level): the increments under them are invisible to backlog_md, so the page warns."""
+    return [m.group(0).strip() for m in INC_LIKE.finditer(text) if not INC_HEADING.fullmatch(m.group(0).strip())]
+
+
+def inc_set(v) -> set[int]:
+    """'3' -> {3}; '0 to 3' -> {0, 1, 2, 3}; '1, 4' -> {1, 4}; 3 -> {3}."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        return {v}
+    v = v if isinstance(v, str) else ""
+    out: set[int] = set()
+    for a, b in re.findall(r"(\d+)\s*(?:to|-|–)\s*(\d+)", v):
+        out |= set(range(int(a), int(b) + 1))
+    return out | {int(x) for x in re.findall(r"\d+", v)}
+
+
 def backlog_md(text: str) -> list[dict]:
     incs = []
-    for m in re.finditer(r"^## Increment (\d+): (.+)$", text, re.M):
+    for m in INC_HEADING.finditer(text):
         n, title = int(m.group(1)), m.group(2).strip()
         body = section(text, f"Increment {n}:")
         demo = re.search(r"Exit demo: (.*?)(?: Scenarios:|$)", body, re.S | re.M)
@@ -393,6 +414,7 @@ def snapshot(root: Path, cfg: dict[str, str], state_dir: Path | None = None) -> 
         "head": head,
         **state,
         "backlog": backlog_md(read(S / "BACKLOG.md")),
+        "backlog_unparsed": backlog_unparsed(read(S / "BACKLOG.md")),
         "milestones": milestones_md(read(S / "MILESTONES.md")),
         "features": json_list(S / "FEATURES.json"),
         "scenarios": json_list(scen_path),

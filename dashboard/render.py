@@ -10,7 +10,7 @@ import posixpath
 import re
 
 from . import compute as C
-from .collect import parse_iso
+from .collect import inc_set, parse_iso
 
 
 def esc(v) -> str:
@@ -85,14 +85,6 @@ def fmt_dur(sec) -> str:
 def fmt_tok(n) -> str:
     n = int(n or 0)
     return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{round(n / 1e3)}k" if n >= 1e3 else str(n)
-
-
-def inc_set(v: str) -> set[int]:
-    """'3' -> {3}; '0 to 3' -> {0, 1, 2, 3}; '1, 4' -> {1, 4}."""
-    out: set[int] = set()
-    for a, b in re.findall(r"(\d+)\s*(?:to|-|–)\s*(\d+)", v or ""):
-        out |= set(range(int(a), int(b) + 1))
-    return out | {int(x) for x in re.findall(r"\d+", v or "")}
 
 
 def time_axis(t0: dt.datetime, t1: dt.datetime, tz: dt.tzinfo, max_ticks: int = 7):
@@ -175,7 +167,8 @@ a.tile.scov{color:inherit;text-decoration:none;cursor:pointer}a.tile.scov:hover{
 @container (max-width: 360px){.pace{display:none}}
 .psegs{display:flex;gap:2px;height:6px;margin-top:4px}.pseg{position:relative;background:var(--idlebg);border-radius:2px;overflow:hidden}
 .pseg i{position:absolute;inset:0 auto 0 0;background:var(--ok)}.pseg.pv1{background:var(--workbg)}.pseg.pv1 i{background:var(--work)}
-.psep{width:3px}
+.psep{width:3px}.pseg.pun{background:repeating-linear-gradient(135deg,var(--idlebg) 0 3px,var(--line) 3px 5px)}
+.unn{font-style:normal;color:var(--muted)}
 .v1n{font-style:normal;color:var(--work)}.pright{display:flex;align-items:baseline;gap:10px}.delta{color:var(--ok);white-space:nowrap}.tile.bad b{color:var(--bad)}
 .mini{display:block;height:5px;border-radius:3px;background:var(--idlebg);overflow:hidden;margin-top:3px}
 .mini span{display:block;height:100%;background:var(--fill)}.mini.full span{background:var(--ok)}
@@ -402,7 +395,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
                 tip = f'{x["id"]} {titles.get(x["id"], "")} · {st} · {p_}/{len(rs_)} rows'
                 segs.append((max(len(rs_), 1), C.kind_of(st), fill, tip))
         else:
-            for nm in inc["planned"] or ["no slices yet"]:
+            for nm in inc["planned"] or ["slices not cut yet"]:
                 segs.append((1, "idle", 0, f"proposed: {short(nm, 120)}"))
         return ('<div class="segs">' + "".join(
             f'<span class="seg {kind}" style="flex:{w}" title="{esc(tip)}"><i style="width:{fill}%"></i></span>'
@@ -518,9 +511,13 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
     inc_html = []
     for inc in incs:
         n = inc["n"]
-        rs, p, h = C.rows_of(features, lambda f, n=n: f.get("increment") == n)
+        rs, p, h = C.rows_of(features, lambda f, n=n: C.row_inc(f) == n)
         mine = C.slices_of(snap, n)
         ms_chip = f'<span class="uchip inc">{esc(inc["milestone"])}</span>' if inc.get("milestone") else ""
+        ttl = inc["title"] or f"Increment {n}"
+        if inc.get("no_section"):
+            ms_chip += (f'<span class="uchip" title="known from {esc(", ".join(inc.get("sources", [])))}; '
+                        f'write a ## Increment {n}: title section in BACKLOG.md">no BACKLOG section</span>')
         if inc["before"]:
             inc_html.append(
                 f'<section class="inc closed"><details id="d-inc-{n}"><summary class="fold">'
@@ -540,6 +537,11 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
         else:
             if inc["planned"]:
                 body.append('<h4>Proposed slices</h4><ul class="plan">' + "".join(f"<li>{esc(short(x, 160))}</li>" for x in inc["planned"]) + "</ul>")
+            else:
+                body.append('<h4>Proposed slices</h4><p class="muted uncut">slices not cut yet</p>')
+            if inc.get("no_section"):
+                body.append(f'<p class="muted">Known from {esc(", ".join(inc.get("sources", [])))}; BACKLOG.md has no '
+                            f'<code>## Increment {n}:</code> section.</p>')
             body.append(f"<h4>Ledger rows</h4>{feature_list(rs)}")
         hum_needs = [r for r in open_needs if n in inc_set(r.get("increment", ""))]
         if mine:
@@ -551,7 +553,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
                        + (f" · elapsed {fmt_dur((now - t0).total_seconds())}" if t0 and n == cur_n else "")
                        + f" · agents {time_txt} · {tok_txt} fresh tokens (partial)")
         else:
-            seg_lbl = f"{len(inc['planned'])} proposed slices"
+            seg_lbl = f"{len(inc['planned'])} proposed slices" if inc["planned"] else "slices not cut yet"
         eta = pc["inc_eta"].get(n, "")
         iprog = (f'<div class="iprog">{seg_bar(n, inc)}<div class="barlbl">ledger rows {p} / {len(rs)} · {seg_lbl}'
                  + (f' · {esc(eta)}' if eta and eta != "done" else "") + '</div>'
@@ -560,7 +562,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
         demo_body = f'<p class="idesc"><b>Exit demo.</b> {esc(inc["demo"]) or "not written yet"}</p>{"".join(body)}'
         retro = f"increment-{n}.md"
         has_retro = retro in snap["retros"]
-        if n < cur_n and ((rs and p == len(rs)) or has_retro):
+        if inc.get("closed") or (n < cur_n and ((rs and p == len(rs)) or has_retro)):
             mts = sorted(t for t in (parse_iso(x.get("merged", "")) for x in mine) if t)
             mrange = ""
             if mts:
@@ -569,13 +571,13 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
             retro_a = f' · <a href="retros/{retro}">retro</a>' if has_retro else ""
             inc_html.append(
                 f'<section class="inc closed"><details id="d-inc-{n}"><summary class="fold">'
-                f'<span class="ino">{n}</span><b class="ct">{esc(inc["title"])}</b>{ms_chip}<span class="chip done">closed</span>'
+                f'<span class="ino">{n}</span><b class="ct">{esc(ttl)}</b>{ms_chip}<span class="chip done">closed</span>'
                 f'<span class="muted">{p} / {len(rs)} rows pass{esc(mrange)}{retro_a}</span></summary>'
                 f'{iprog}{demo_body}</details></section>')
             continue
         inc_html.append(
             f'<section class="inc {"open" if n == cur_n else ""}"><details id="d-inc-{n}" {"open" if n == cur_n else ""}>'
-            f'<summary><div class="ihead"><span class="ino">{n}</span><div><h3>{esc(inc["title"])}{ms_chip}</h3></div>'
+            f'<summary><div class="ihead"><span class="ino">{n}</span><div><h3>{esc(ttl)}{ms_chip}</h3></div>'
             f'<span class="chip {kind}">{esc(state_lbl or "planned")}</span></div>{iprog}'
             f'</summary>{demo_body}</details></section>')
 
@@ -595,10 +597,23 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
     prog_segs = pv1 + "".join(
         f'<span class="pseg" style="flex:{t}" title="increment {n} {esc(ttl)}: {d:.1f}/{t:g} slice-equivalents">'
         f'<i style="width:{100 * d / t:.0f}%"></i></span>' for n, ttl, t, d in per)
+    uns = C.unsized(snap, incs)
+    u_ns = ", ".join(str(i["n"]) for i in uns)
+    unsized_txt = ""
+    if uns:
+        u_tip = (f"Increments {u_ns} have neither slice rows nor proposed slices, so their size is unknown: they are left out "
+                 "of the percentage, neither done nor remaining, until plan-increment or prepare writes their slices; "
+                 "shown hatched at the average increment size for scale.")
+        prog_segs += "".join(f'<span class="pseg pun" style="flex:{avg:.2f}" title="increment {i["n"]} '
+                             f'{esc(i["title"])}: not sized, not counted"></span>' for i in uns)
+        unsized_txt = (f'<small><i class="unn" title="{esc(u_tip)}">▨ not sized yet: increment{"s" if len(uns) > 1 else ""} '
+                       f'{esc(u_ns)}, not counted</i></small>')
     vocab = ", ".join(f"{int(100 * c)}% {s}" for s, (_, _, c) in C.STATES.items() if c)
     prog_tip = ("Backlog progress in slice-equivalents: every slice of every increment counts 1 (from the slice table, or the "
                 f"increment's proposed slices before it has rows); a slice earns credit by state ({vocab}; merged earns 100% once "
-                "T2 is green). Increments: " + "; ".join(f"{n}: {d:.1f}/{t:g}" for n, _, t, d in per))
+                "T2 is green). An increment with neither slice rows nor proposed slices is not sized: it is left out of the "
+                "percentage, neither done nor remaining, and shown hatched"
+                + (f" (now: {u_ns})" if uns else "") + ". Increments: " + "; ".join(f"{n}: {d:.1f}/{t:g}" for n, _, t, d in per))
     dl = C.delta(history or [], prog, now, tz)
     spark = ""
     if dl:
@@ -609,8 +624,8 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
                 f'<span class="pace"> at today&#x27;s pace</span></small>') if pc["eta"] else ""
     ms_lbl = f'{ms.get("current", "")} {ms.get("state", "")} · ' if ms.get("current") else ""
     prog_tile = (f'<div class="tile prog" title="{esc(prog_tip)}"><em>Backlog progress · {esc(ms_lbl)}increment {cur_n} {esc(incr.get("state", ""))}</em>'
-                 f'<div class="prow"><b>{prog:.0f}<span>% · {done_steps:.1f}/{total_steps:g} slices</span></b>'
-                 f'<span class="pright">{spark}{eta_html}</span></div><div class="psegs">{prog_segs}</div>{before_txt}</div>')
+                 f'<div class="prow"><b>{prog:.0f}<span>%{" of sized" if uns else ""} · {done_steps:.1f}/{total_steps:g} slices</span></b>'
+                 f'<span class="pright">{spark}{eta_html}</span></div><div class="psegs">{prog_segs}</div>{before_txt}{unsized_txt}</div>')
 
     # ---- budget tile ----
     bd = C.budget(snap, per, now)
@@ -626,7 +641,8 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
         verdict = "backlog fits ✓" if fc["fits"] else f"backlog ≈{fc['reach_pct']:.0f}% this week"
         vcls = "ok" if fc["fits"] else "warn"
         tip = esc(f"used {used:.0f}% · the backlog needs ≈{fc['need']:.0f}% more ({fc['remaining']:.0f} slices × {fc['per_slice']:.1f}%) · "
-                  f"ends at ≈{fc['end']:.0f}% · hold {bd['hold']}% · stop {stop}% · ≈{fc['hours_left']:.0f} h of work left at today's burn")
+                  f"ends at ≈{fc['end']:.0f}% · hold {bd['hold']}% · stop {stop}% · ≈{fc['hours_left']:.0f} h of work left at today's burn"
+                  + (f" · sized increments only; {u_ns} not sized, not counted" if uns else ""))
         spare = f"spare {fc['spare']:.0f}%" if fc["fits"] else f"short {-fc['spare']:.0f}%"
         budget_tile = (f'<div class="tile budget {bd["kind"]}" title="{tip}"><em>Weekly budget · resets {reset_txt}</em>'
                        f'<div class="prow"><b>{used:.0f}<span>%</span></b><span class="vchip {vcls}">{esc(verdict)}</span></div>'
@@ -663,6 +679,14 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
     unknown = C.unknown_states(snap)
     unknown_html = (f'<div class="hold" title="add them to the vocabulary in dashboard/compute.py upstream">'
                     f'Slice states outside the vocabulary, rendered UNKNOWN: {esc(", ".join(unknown))}</div>') if unknown else ""
+    unparsed = snap.get("backlog_unparsed") or []
+    nosec = [str(i["n"]) for i in incs if i.get("no_section")]
+    backlog_html = ((f'<div class="hold" title="the dashboard reads only ## Increment N: title headings; the increments under '
+                     f'these are not read from BACKLOG.md">BACKLOG.md headings the dashboard cannot read: '
+                     f'{esc("; ".join(unparsed))}. Write one <code>## Increment N: title</code> section per increment.</div>')
+                    if unparsed else "")
+    backlog_html += ((f'<div class="hold" title="known from MILESTONES.md, FEATURES.json or NEEDS-HUMAN.md; rendered from what '
+                      f'those files say">Increments without a BACKLOG.md section: {esc(", ".join(nosec))}</div>') if nosec else "")
     holds_html = "".join(f'<div class="hold" title="{esc(h.get("resume_when", ""))}">⏸ {esc(short(h["reason"], 200))}'
                          + (f' <span class="muted">· {esc(short(h.get("resume_when", ""), 120))}</span>' if h.get("resume_when") else "")
                          + '</div>' for h in snap["holds"])
@@ -710,7 +734,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
 {budget_tile}
 {money_tile}
 </div>
-{unknown_html}{holds_html}
+{unknown_html}{backlog_html}{holds_html}
 </header>
 {scen_html}
 <h2>Increments</h2>{''.join(inc_html) or '<p class="muted">No increments in BACKLOG.md yet.</p>'}

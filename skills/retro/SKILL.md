@@ -4,7 +4,7 @@ description: Close an increment under sliceworks - run the demo, spawn the effic
 license: Apache-2.0
 metadata:
   source: sudo-sane/sliceworks
-  version: 0.5.0
+  version: 0.5.1
 ---
 
 # Close an increment
@@ -18,4 +18,4 @@ Method: `method/03-lifecycles.md` (Increment), `method/09-metrics-and-improvemen
 5. **Adopt.** At most three proposals, each with a metric and a sunset, each becoming a process slice with a brief. Set statuses in the run file and `PROPOSALS.md`. A proposal touching the human-only list, the holds, the scope or the binding documents goes to `NEEDS-HUMAN.md` instead.
 6. **Revisit.** Last retrospective's adopted proposals: `verified` if the metric moved, otherwise `sunset` and revert the change.
 7. **Write** `<state-dir>/retros/increment-<n>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/retro.md`: delivered, what review caught, what slowed delivery, process changes made, carried forward.
-8. **Close.** Record milestones in `STATE.md`, set the increment `closed`, start the next (`started` needs its defaults recorded and one ready brief per writer), and notify the owner with the demo and retro links. This is one of the four notifications.
+8. **Close.** Record milestones in `STATE.md`, set the increment `closed` in `STATE.md`, in its `MILESTONES.md` increments row and with a `Closed <date>` note in its `BACKLOG.md` section, start the next (`started` needs its defaults recorded, one ready brief per writer and its own `## Increment <n>: <title>` section in `BACKLOG.md`, never a range heading; the design-doc lint checks it), and notify the owner with the demo and retro links. This is one of the four notifications.

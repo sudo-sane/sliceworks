@@ -1,0 +1,7 @@
+[
+  {"id": "R-001", "kind": "scenario", "milestone": "M1", "increment": 0, "slice": "slice-01", "title": "The service answers", "cwd": ".", "check": "make t-001", "passes": true, "evidence": "log", "human_act": null, "tasks": []},
+  {"id": "R-002", "kind": "scenario", "milestone": "M1", "increment": 1, "slice": "slice-02", "title": "An imported file is listed", "cwd": ".", "check": "make t-002", "passes": false, "evidence": null, "human_act": null, "tasks": []},
+  {"id": "R-003", "kind": "criterion", "milestone": "M1", "increment": 3, "slice": null, "title": "The audit trail records each import", "cwd": ".", "check": "make t-003", "passes": true, "evidence": "log", "human_act": null, "tasks": []},
+  {"id": "R-004", "kind": "criterion", "milestone": "M1", "increment": "3", "slice": null, "title": "The audit trail survives a restart", "cwd": ".", "check": "make t-004", "passes": false, "evidence": null, "human_act": null, "tasks": []},
+  {"id": "R-005", "kind": "scenario", "milestone": "M1", "increment": 4, "slice": null, "title": "An export file round-trips", "cwd": ".", "check": "make t-005", "passes": false, "evidence": null, "human_act": null, "tasks": []}
+]

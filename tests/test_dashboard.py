@@ -336,6 +336,120 @@ class AdoptedFixture(unittest.TestCase):
         self.assertTrue(any("thinned" in r.text_all() for r in rows))
 
 
+def legacy_increments(snap):
+    """compute.increments as of 0.8.3, kept as the negative control: backlog sections plus closed MILESTONES rows only."""
+    ms_of = {i["n"]: m["id"] for m in snap["milestones"] for i in m["increments"]}
+    incs = [dict(i, milestone=ms_of.get(i["n"], ""), before=False) for i in snap["backlog"]]
+    have = {i["n"] for i in incs}
+    before = []
+    for m in snap["milestones"]:
+        for i in m["increments"]:
+            if i["n"] not in have and re.match(r"(closed|done|accepted)", i["state"].strip().lower()):
+                before.append({"n": i["n"], "title": i["title"], "demo": i["demo"], "planned": [], "titles": {},
+                               "milestone": m["id"], "before": True, "state_text": i["state"]})
+                have.add(i["n"])
+    return sorted(before, key=lambda i: i["n"]) + incs
+
+
+class IncrementsFixture(unittest.TestCase):
+    """BACKLOG.md has sections 0 and 1 (the normal case) and a range heading `## Increments 4 to 5`; increment 2 is
+    known only from MILESTONES.md, 3 only from FEATURES.json (one row with the number as a string), 5 only from
+    NEEDS-HUMAN.md, 4 from MILESTONES.md and FEATURES.json."""
+    KNOWN = [0, 1, 2, 3, 4, 5]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp, cls.root = copy_fixture("increments")
+        cls.rc, cls.out, cls.page = render_fixture(cls.root)
+        cls.snap = collect.snapshot(cls.root, collect.load_config(cls.root))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    @staticmethod
+    def problems(page, known):
+        """What the owner could not see: a known increment without its fold, or the range heading without a banner."""
+        folds = {int(d.attrs["id"][6:]) for d in page.all("details") if d.attrs.get("id", "").startswith("d-inc-")}
+        out = [f"increment {n} has no fold" for n in known if n not in folds]
+        banners = " ".join(h.text_all() for h in page.first("header", "hd").all("div", "hold"))
+        if "## Increments 4 to 5" not in banners:
+            out.append("no banner names the unreadable heading")
+        return out
+
+    def fold(self, n):
+        return next(s for s in self.page.all("section", "inc") if s.first("details").attrs.get("id") == f"d-inc-{n}")
+
+    def test_every_known_increment_renders_and_the_range_heading_warns(self):
+        self.assertEqual(self.rc, 0)
+        self.assertEqual(self.problems(self.page, self.KNOWN), [])
+        order = [int(d.attrs["id"][6:]) for d in self.page.all("details") if d.attrs.get("id", "").startswith("d-inc-")]
+        self.assertEqual(order, self.KNOWN)
+        self.assertEqual(self.snap["backlog_unparsed"], ["## Increments 4 to 5"])
+        banners = [h.text_all() for h in self.page.first("header", "hd").all("div", "hold")]
+        self.assertTrue(any("without a BACKLOG.md section: 2, 3, 4, 5" in b for b in banners), banners)
+
+    def test_negative_control_the_old_behaviour_fails(self):
+        """The 0.8.3 dashboard (closed MILESTONES increments only, no heading check) fails the same test."""
+        tmp, root = copy_fixture("increments")
+        old_inc, old_unparsed = compute.increments, collect.backlog_unparsed
+        compute.increments, collect.backlog_unparsed = legacy_increments, lambda text: []
+        try:
+            with tmp:
+                _, _, page = render_fixture(root)
+        finally:
+            compute.increments, collect.backlog_unparsed = old_inc, old_unparsed
+        self.assertEqual(self.problems(page, self.KNOWN), ["increment 2 has no fold", "increment 3 has no fold",
+                                                           "increment 4 has no fold", "increment 5 has no fold",
+                                                           "no banner names the unreadable heading"])
+
+    def test_normal_sections_unchanged(self):
+        cur = self.fold(1)
+        self.assertIn("open", cur.first("details").attrs)
+        self.assertEqual(len(cur.all("article", "slice")), 2)
+        self.assertNotIn("no BACKLOG section", cur.text_all())
+        self.assertIn("closed", self.fold(0).classes)
+
+    def test_increment_known_only_from_milestones(self):
+        inc = self.fold(2)
+        self.assertIn("reports", inc.first("h3").text_all())
+        self.assertIn("no BACKLOG section", inc.text_all())
+        self.assertIn("a report of the last import prints", inc.first("p", "idesc").text_all())
+        self.assertIsNotNone(inc.first("p", "uncut"), "slices not cut yet")
+        self.assertIn("Known from MILESTONES.md", inc.text_all())
+
+    def test_increment_known_only_from_features(self):
+        inc = self.fold(3)
+        self.assertIn("Increment 3", inc.first("h3").text_all())
+        self.assertIn("ledger rows 1 / 2", inc.first("div", "barlbl").text_all(), "a string increment counts too")
+        self.assertEqual([c.text for c in inc.first("ul", "rows").all("code")], ["R-003", "R-004"])
+        self.assertIn("Known from FEATURES.json", inc.text_all())
+
+    def test_increment_known_only_from_needs_human(self):
+        inc = self.fold(5)
+        self.assertIn("NH-02", inc.first("div", "acts").text_all())
+        self.assertIn("Known from NEEDS-HUMAN.md", inc.text_all())
+
+    def test_unsized_increments_are_shown_not_counted(self):
+        incs = compute.increments(self.snap)
+        self.assertEqual([i["n"] for i in compute.unsized(self.snap, incs)], [2, 3, 4, 5])
+        per = compute.progress(self.snap, incs, 1)
+        self.assertEqual([(n, t, d) for n, _, t, d in per], [(0, 1.0, 1.0), (1, 2.0, 0.25)])
+        tile = self.page.first("div", "prog")
+        self.assertIn("left out of the percentage, neither done nor remaining", tile.attrs["title"])
+        self.assertIn("now: 2, 3, 4, 5", tile.attrs["title"])
+        self.assertIn("42% of sized", tile.first("b").text_all())
+        self.assertEqual(len(tile.all("span", "pun")), 4)
+        self.assertIn("not sized yet: increments 2, 3, 4, 5, not counted", tile.text_all())
+
+    def test_sized_projects_keep_the_plain_tile(self):
+        tmp, root = copy_fixture("run")
+        with tmp:
+            _, _, page = render_fixture(root)
+        self.assertNotIn("of sized", page.first("div", "prog").first("b").text_all())
+        self.assertIsNone(page.first("span", "pun"))
+
+
 class Edges(unittest.TestCase):
     def test_unknown_state_is_visible(self):
         tmp, root = copy_fixture("run")

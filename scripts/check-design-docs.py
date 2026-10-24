@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-# sliceworks 0.6.0. Design-document lints (method chapter 14), run from T0 in projects with living design documents.
+# sliceworks 0.8.4. Design-document lints (method chapter 14), run from T0 in projects with living design documents.
 #   1. A change to ARCHITECTURE.md since <base> cites a decision (D-<n>) in the added lines or in a commit message.
 #   2. No current INDEX.md row is older than SW_REVIEW_LIMIT_DAYS (archived rows are history and exempt).
 #   3. A frozen spec (front matter `status: frozen`) contains no TODO.
 #   4. After the newest pivot decision (a D entry whose metadata line carries `pivot`), every current INDEX.md row
 #      carries a last-reviewed date at or after it; archived rows are exempt.
 #   5. No brief (slices/) or contract (contracts/) references an archived document (archive/<date>-<name>).
+#   6. BACKLOG.md has one `## Increment <n>: <title>` section for every increment that MILESTONES.md lists and every
+#      increment number in FEATURES.json and NEEDS-HUMAN.md, and no increment heading in another form (a range such
+#      as `## Increments 2 to 5`). Closed MILESTONES increments numbered below every section are pre-adoption, exempt.
 # Usage: check-design-docs.py --root <repo> [--base <ref>] [--state-dir docs/process] [--limit-days 30] [--specs specs]
 # Prints one line per check (ok/fail) and RESULT=pass|fail; exit 1 on fail.
-import argparse, datetime as dt, pathlib, re, subprocess, sys
+import argparse, datetime as dt, json, pathlib, re, subprocess, sys
 
 D_REF = re.compile(r"\bD-\d+\b")
 
@@ -140,6 +143,77 @@ def check_archived_refs(root, state_dir):
     return True, "archive: no brief or contract references an archived document"
 
 
+INC_HEADING = re.compile(r"^## Increment (\d+): \S.*$")
+INC_LIKE = re.compile(r"^#{1,6}\s*Increments?\b.*$", re.M | re.I)
+
+
+def table_after(text, marker):
+    """Rows (cell lists) of the first Markdown table after marker, header and rule skipped."""
+    rows, seen = [], False
+    for line in text.split(marker, 1)[1].splitlines() if marker in text else []:
+        if not line.startswith("|"):
+            if seen:
+                break
+            continue
+        seen = True
+        rows.append([c.strip() for c in line.strip().strip("|").split("|")])
+    return rows[2:]
+
+
+def numbers(v):
+    """Increment numbers in a cell or value: 3, "3", "0 to 3", "1, 4"."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        return {v}
+    v = v if isinstance(v, str) else ""
+    out = set()
+    for a, b in re.findall(r"(\d+)\s*(?:to|-|–)\s*(\d+)", v):
+        out |= set(range(int(a), int(b) + 1))
+    return out | {int(x) for x in re.findall(r"\d+", v)}
+
+
+def check_backlog(root, state_dir):
+    d = root / state_dir
+    path = d / "BACKLOG.md"
+    if not path.exists():
+        return True, "backlog: no file"
+    text = path.read_text()
+    have = {int(m.group(1)) for m in (INC_HEADING.match(l.strip()) for l in text.splitlines()) if m}
+    bad = [h.strip() for h in INC_LIKE.findall(text) if not INC_HEADING.match(h.strip())]
+    need, closed = {}, set()
+    ms = d / "MILESTONES.md"
+    for sec in re.split(r"^## ", ms.read_text(), flags=re.M) if ms.exists() else []:
+        for cells in table_after(sec, "### Increments"):
+            m = re.match(r"(\d+)", cells[0])
+            if m:
+                need.setdefault(int(m.group(1)), set()).add("MILESTONES.md")
+                if re.match(r"(closed|done|accepted)", (cells[3] if len(cells) > 3 else "").lower()):
+                    closed.add(int(m.group(1)))
+    try:
+        rows = json.loads((d / "FEATURES.json").read_text()) if (d / "FEATURES.json").exists() else []
+    except ValueError:
+        rows = []
+    for r in rows if isinstance(rows, list) else []:
+        for n in numbers(r.get("increment") if isinstance(r, dict) else None):
+            need.setdefault(n, set()).add("FEATURES.json")
+    nh = d / "NEEDS-HUMAN.md"
+    for line in nh.read_text().splitlines() if nh.exists() else []:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.startswith("|") and re.match(r"[A-Z]+-\d+$", cells[0]) and len(cells) > 1:
+            for n in numbers(cells[1]):
+                need.setdefault(n, set()).add("NEEDS-HUMAN.md")
+    first = min(have, default=None)
+    missing = [f"{n} ({', '.join(sorted(need[n]))})" for n in sorted(need)
+               if n not in have and not (n in closed and (first is None or n < first))]
+    problems = []
+    if bad:
+        problems.append("unreadable increment headings (write one '## Increment N: title' section each): " + "; ".join(bad))
+    if missing:
+        problems.append("increments without a '## Increment N: title' section: " + ", ".join(missing))
+    if problems:
+        return False, "backlog: " + "; ".join(problems)
+    return True, "backlog: one section for every known increment"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".")
@@ -152,7 +226,7 @@ def main(argv=None):
     root = pathlib.Path(a.root).resolve()
     today = dt.date.fromisoformat(a.today) if a.today else dt.date.today()
     results = [check_architecture(root, a.state_dir, a.base), check_index(root, a.state_dir, a.limit_days, today), check_specs(root, a.specs),
-               check_pivot_review(root, a.state_dir), check_archived_refs(root, a.state_dir)]
+               check_pivot_review(root, a.state_dir), check_archived_refs(root, a.state_dir), check_backlog(root, a.state_dir)]
     ok = True
     for passed, msg in results:
         print(("ok   " if passed else "FAIL ") + msg)
