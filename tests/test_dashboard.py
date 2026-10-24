@@ -115,6 +115,13 @@ class Vocabulary(unittest.TestCase):
         for st in TEMPLATE_STATES:
             self.assertTrue(compute.known(st), st)
 
+    def test_every_method_slice_state_is_known(self):
+        text = (HERE.parent / "method/03-lifecycles.md").read_text().split("## Slice\n", 1)[1].split("\n## ", 1)[0]
+        states = re.findall(r"^\| `([a-z_]+)` \|", text, re.M)
+        self.assertGreaterEqual(len(states), 13, "the chapter 3 slice table was not found")
+        for st in states:
+            self.assertTrue(compute.known(st), st)
+
     def test_every_kind_has_a_chip_style(self):
         for kind in {k for _, k, _ in compute.STATES.values()} | {"unknown"}:
             if kind != "idle":

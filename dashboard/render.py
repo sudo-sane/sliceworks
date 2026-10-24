@@ -348,7 +348,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
             live = st in C.LIVE_STATES
             parts = [("impl", a, now if live else (c or r_ or m_ or now), live)]
             if c and not live:
-                parts.append(("rev", c, r_ or m_ or now, st == "review"))
+                parts.append(("rev", c, r_ or m_ or now, st in ("review", "in_review")))
             if r_ and m_ and m_ > r_:
                 parts.append(("mrg", r_, m_, False))
             if m_ and g_:
