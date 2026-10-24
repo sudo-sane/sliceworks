@@ -7,20 +7,24 @@ import re
 
 from .collect import SLICE_ID, inc_set, parse_iso
 
-# The slice-state vocabulary, defined once: state -> (stepper stage, colour kind, progress credit).
-# Stage indexes STAGES below (-1: not started). Credit is the share of one slice-equivalent; None leaves the slice
-# out of the progress total (cut work). "merged" earns 1.0 once its green (T2) timestamp is recorded.
+# The slice-state vocabulary, defined once: state -> (stepper stage, colour kind, progress credit). It holds every
+# state of method chapter 3's slice lifecycle plus older spellings (review, testing, draft); check-design-docs.py
+# lints STATE.md and BACKLOG.md against it. Stage indexes STAGES below (-1: not started). Credit is the share of one
+# slice-equivalent; None leaves the slice out of the progress total (cut work). "merged" earns 1.0 once its green
+# (T2) timestamp is recorded.
 STAGES = [("ready", "Brief ready"), ("active", "Implementing"), ("candidate", "Candidate"),
           ("review_pass", "Review passed"), ("merged", "Merged"), ("green", "T2 green")]
 STATES: dict[str, tuple[int, str, float | None]] = {
     "proposed": (-1, "idle", 0.0), "draft": (-1, "idle", 0.0), "ready": (0, "ready", 0.05),
     "active": (1, "work", 0.25), "blocked": (1, "bad", 0.25), "paused": (1, "warn", 0.25), "hold": (1, "warn", 0.25),
     "repair": (1, "warn", 0.5), "testing": (2, "work", 0.5), "candidate": (2, "work", 0.5),
-    "review": (3, "work", 0.6), "waiting": (3, "ready", 0.5), "merged": (5, "done", 0.9), "green": (5, "done", 1.0),
+    "review": (3, "work", 0.6), "in_review": (3, "work", 0.6), "waiting": (3, "ready", 0.5),
+    "merged": (5, "done", 0.9), "green": (5, "done", 1.0), "accepted": (5, "done", 1.0),
+    "blocked_on_human": (-1, "warn", 0.0),
     "plan_review": (-1, "ready", 0.0), "contract_hold": (-1, "warn", 0.0), "source_hold": (-1, "warn", 0.0),
     "stopped": (-1, "idle", 0.0), "cut": (-1, "idle", None), "dropped": (-1, "idle", None), "superseded": (-1, "idle", None),
 }
-DONE_STATES = ("merged", "green", "waiting")
+DONE_STATES = ("merged", "green", "accepted", "waiting")
 LIVE_STATES = ("active", "repair", "blocked", "testing")
 # Credit reached by a timestamp column, for the budget burn since the last weekly reset.
 STAMP_CREDIT = (("ready", 0.05), ("active", 0.25), ("candidate", 0.6), ("review_pass", 0.6), ("merged", 0.9), ("green", 1.0))
@@ -256,7 +260,7 @@ def ready_now(snap: dict) -> dict:
     sl = slices_of(snap)
     state = {x["id"]: norm_state(x.get("state")) for x in sl}
     open_nh = {r["id"] for r in snap["needs"] if r.get("open")}
-    writing = [x for x in sl if norm_state(x.get("state")) in ("active", "repair", "review", "testing")]
+    writing = [x for x in sl if norm_state(x.get("state")) in ("active", "repair", "review", "in_review", "testing")]
     try:
         cap = int(snap["config"].get("SW_WRITER_CAP", "") or 0)
     except ValueError:

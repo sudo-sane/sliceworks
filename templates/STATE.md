@@ -26,6 +26,7 @@ history:
 |---|---|---|---|---|---|
 
 ## Slices
+<!-- state: a slice state of method chapter 3 only; a slice cut by plan-increment starts as proposed. The design-doc lint fails any other value. -->
 | id | state | branch | head | ready | active | candidate | review_pass | merged | green | rounds | msgs | usage | tasks | increment | depends_hard | depends_soft | touches |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 

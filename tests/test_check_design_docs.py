@@ -1,4 +1,4 @@
-# sliceworks 0.8.4. Tests for scripts/check-design-docs.py: each lint turns red on its failure and stays green otherwise.
+# sliceworks 0.8.5. Tests for scripts/check-design-docs.py: each lint turns red on its failure and stays green otherwise.
 import contextlib, importlib.util, io, os, pathlib, shutil, subprocess, tempfile, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -135,6 +135,45 @@ class BacklogLint(unittest.TestCase):
         ok, msg = cdd.check_backlog(root, "docs/process")
         self.assertFalse(ok, "a heading without a title is unreadable")
         self.assertIn("## Increment 3", msg)
+
+
+class SliceStateLint(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.root = pathlib.Path(self.tmp.name)
+        (self.root / "docs/process").mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_slice_states_outside_the_vocabulary_fail(self):
+        d = self.root / "docs/process"
+        (d / "STATE.md").write_text(
+            "# State\n\n## Contracts\n| id | file | state |\n|---|---|---|\n| C-001 | c.md | frozen |\n\n"
+            "## Slices\n| id | state | branch |\n|---|---|---|\n| slice-01-a | proposed | b |\n"
+            "| slice-02-b | in_review | b |\n| slice-03-c | blocked_on_human | b |\n")
+        (d / "BACKLOG.md").write_text("## Increment 1: one\n\n| slice | state | content |\n|---|---|---|\n"
+                                     "| slice-01-a | proposed | x |\n")
+        ok, msg = cdd.check_slice_states(self.root, "docs/process")
+        self.assertTrue(ok, msg)
+        (d / "BACKLOG.md").write_text((d / "BACKLOG.md").read_text().replace("| proposed | x |", "| planned | x |"))
+        ok, msg = cdd.check_slice_states(self.root, "docs/process")
+        self.assertFalse(ok, "planned is not a slice state")
+        self.assertIn("BACKLOG.md slice-01-a 'planned'", msg)
+        self.assertNotIn("C-001", msg, "rows that are not slices are not checked")
+
+    def test_slice_states_skip_without_a_vocabulary(self):
+        (self.root / "docs/process/STATE.md").write_text("| id | state |\n|---|---|\n| slice-01-a | planned |\n")
+        self.assertFalse(cdd.check_slice_states(self.root, "docs/process")[0])
+        ok, msg = cdd.check_slice_states(self.root, "docs/process", vocabulary=set())
+        self.assertFalse(ok, "an explicit empty vocabulary still checks")
+        real = cdd.slice_vocabulary
+        cdd.slice_vocabulary = lambda: None
+        try:
+            ok, msg = cdd.check_slice_states(self.root, "docs/process")
+        finally:
+            cdd.slice_vocabulary = real
+        self.assertTrue(ok)
+        self.assertIn("skipped", msg)
 
 
 if __name__ == "__main__":

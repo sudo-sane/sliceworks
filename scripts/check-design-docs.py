@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# sliceworks 0.8.4. Design-document lints (method chapter 14), run from T0 in projects with living design documents.
+# sliceworks 0.8.5. Design-document lints (method chapter 14), run from T0 in projects with living design documents.
 #   1. A change to ARCHITECTURE.md since <base> cites a decision (D-<n>) in the added lines or in a commit message.
 #   2. No current INDEX.md row is older than SW_REVIEW_LIMIT_DAYS (archived rows are history and exempt).
 #   3. A frozen spec (front matter `status: frozen`) contains no TODO.
@@ -9,6 +9,9 @@
 #   6. BACKLOG.md has one `## Increment <n>: <title>` section for every increment that MILESTONES.md lists and every
 #      increment number in FEATURES.json and NEEDS-HUMAN.md, and no increment heading in another form (a range such
 #      as `## Increments 2 to 5`). Closed MILESTONES increments numbered below every section are pre-adoption, exempt.
+#   7. Every slice row (an id cell `slice-<n>...`) of a table with a `state` column in STATE.md or BACKLOG.md carries a
+#      state of the slice vocabulary (method chapter 3; defined once in dashboard/compute.py STATES), so the dashboard
+#      never shows a slice as UNKNOWN. Skipped when the package's dashboard is not beside this script.
 # Usage: check-design-docs.py --root <repo> [--base <ref>] [--state-dir docs/process] [--limit-days 30] [--specs specs]
 # Prints one line per check (ok/fail) and RESULT=pass|fail; exit 1 on fail.
 import argparse, datetime as dt, json, pathlib, re, subprocess, sys
@@ -214,6 +217,52 @@ def check_backlog(root, state_dir):
     return True, "backlog: one section for every known increment"
 
 
+SLICE_ROW = re.compile(r"slice-\d+[A-Za-z0-9-]*$")
+
+
+def slice_vocabulary():
+    """The dashboard's slice states, or None when this copy of the script has no dashboard beside it."""
+    pkg = pathlib.Path(__file__).resolve().parent.parent
+    if not (pkg / "dashboard" / "compute.py").exists():
+        return None
+    sys.path.insert(0, str(pkg))
+    try:
+        from dashboard.compute import STATES
+    except ImportError:
+        return None
+    finally:
+        sys.path.remove(str(pkg))
+    return set(STATES)
+
+
+def check_slice_states(root, state_dir, vocabulary=None):
+    vocab = vocabulary if vocabulary is not None else slice_vocabulary()
+    if vocab is None:
+        return True, "slice states: skipped (no dashboard vocabulary beside this script)"
+    bad = []
+    for name in ("STATE.md", "BACKLOG.md"):
+        path = root / state_dir / name
+        header = None
+        for line in path.read_text().splitlines() if path.exists() else []:
+            if not line.startswith("|"):
+                header = None
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if header is None:
+                header = [c.lower() for c in cells]
+                continue
+            if "state" not in header or set("".join(cells)) <= set("-: "):
+                continue
+            sid = cells[0].split()[0] if cells[0] else ""
+            st = cells[header.index("state")].strip().strip("`").lower() if len(cells) > header.index("state") else ""
+            if SLICE_ROW.match(sid) and st not in vocab:
+                bad.append(f"{name} {sid} '{st}'")
+    if bad:
+        return False, ("slice states outside the vocabulary (use one of method chapter 3, e.g. proposed, ready, "
+                       "active, merged): " + "; ".join(bad))
+    return True, "slice states: every slice row uses the slice vocabulary"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".")
@@ -226,7 +275,8 @@ def main(argv=None):
     root = pathlib.Path(a.root).resolve()
     today = dt.date.fromisoformat(a.today) if a.today else dt.date.today()
     results = [check_architecture(root, a.state_dir, a.base), check_index(root, a.state_dir, a.limit_days, today), check_specs(root, a.specs),
-               check_pivot_review(root, a.state_dir), check_archived_refs(root, a.state_dir), check_backlog(root, a.state_dir)]
+               check_pivot_review(root, a.state_dir), check_archived_refs(root, a.state_dir), check_backlog(root, a.state_dir),
+               check_slice_states(root, a.state_dir)]
     ok = True
     for passed, msg in results:
         print(("ok   " if passed else "FAIL ") + msg)
