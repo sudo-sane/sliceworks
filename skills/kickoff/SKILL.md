@@ -4,7 +4,7 @@ description: Run the one kickoff session of a sliceworks run with the owner - sc
 license: Apache-2.0
 metadata:
   source: sudo-sane/sliceworks
-  version: 0.5.0
+  version: 0.5.1
 ---
 
 # Kickoff
@@ -13,7 +13,7 @@ This is the one session in which the owner answers questions in chat; it is the 
 
 1. **Scope.** State what is in and what is out, as a short list each. A new product question with no recommended default becomes a human-only item, not a guess.
 2. **Human-only list.** Start from method 10 and add the product's own acts (paid runs above a cap, real users, real data, publications, signatures). Record additions in `.sliceworks/config.env` and `NEEDS-HUMAN.md`.
-3. **Milestone and increments.** Name the first milestone in `MILESTONES.md` (promise, success metrics, exit criteria, gate families). Three to six increments, each with an exit demo a script can run on synthetic data, ordered so the first is a walking skeleton. User scenarios into `SCENARIOS.json`. Write `BACKLOG.md` from the template: increment sections with exit demo, scenarios, and a slice table (`slice | state | content | depends on | writer`).
+3. **Milestone and increments.** Name the first milestone in `MILESTONES.md` (promise, success metrics, exit criteria, gate families). Three to six increments, each with an exit demo a script can run on synthetic data, ordered so the first is a walking skeleton. User scenarios into `SCENARIOS.json`. Write `BACKLOG.md` from the template: one `## Increment <n>: <title>` section per increment (template `${CLAUDE_PLUGIN_ROOT}/templates/BACKLOG.md`), never a range heading such as `## Increments 2 to 5`, each with exit demo, scenarios and human acts, then a slice table (`slice | state | content | depends on | writer`) for the increments sliced today and a `Proposed slices (candidates): a; b; c.` line for the later ones.
 4. **Feature ledger.** One row per acceptance scenario and per slice criterion in `FEATURES.json` (schema in `${CLAUDE_PLUGIN_ROOT}/schemas/features-row.schema.json`): `id`, `increment`, `slice`, `title`, `cwd`, `check` (a command that fails unless the named test ran and passed), `passes: false`, `evidence: null`, `human_act`, `tasks`. A row without a runnable check is not a row.
 5. **Contracts.** For the first slices, run the `contract-author` agent; record class B choices in `STATE.md` Decisions; freeze with fixtures; record file and SHA under Contracts.
 6. **Budget and models.** The run's share of the window and the holds (already in `config.env`); model routing by role (method 8); the writer cap.

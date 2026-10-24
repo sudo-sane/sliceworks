@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-from .collect import SLICE_ID, parse_iso
+from .collect import SLICE_ID, inc_set, parse_iso
 
 # The slice-state vocabulary, defined once: state -> (stepper stage, colour kind, progress credit).
 # Stage indexes STAGES below (-1: not started). Credit is the share of one slice-equivalent; None leaves the slice
@@ -101,35 +101,73 @@ def rows_of(features: list[dict], pred) -> tuple[list[dict], int, int]:
     return rs, sum(1 for f in rs if f.get("passes") is True), sum(1 for f in rs if f.get("passes") is not True and f.get("human_act"))
 
 
+def row_inc(f: dict) -> int | None:
+    """A FEATURES.json row's increment as an integer (3 or "3"); None when absent or unreadable."""
+    v = f.get("increment")
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    return int(v) if isinstance(v, str) and v.strip().isdigit() else None
+
+
+def closed_text(state: str) -> bool:
+    return bool(re.match(r"(closed|done|accepted)", (state or "").strip().lower()))
+
+
 def increments(snap: dict) -> list[dict]:
-    """Backlog increments, plus increments the milestones list as closed that the backlog no longer carries."""
-    ms_of = {i["n"]: m["id"] for m in snap["milestones"] for i in m["increments"]}
-    incs = [dict(i, milestone=ms_of.get(i["n"], ""), before=False) for i in snap["backlog"]]
-    have = {i["n"] for i in incs}
-    before = []
+    """Every increment the project knows about, whatever its state: the BACKLOG.md sections, every row of the
+    MILESTONES.md increments tables, every FEATURES.json increment and every NEEDS-HUMAN.md increment number.
+    One without a BACKLOG section is rendered from what is known (no_section, with its sources). A closed MILESTONES
+    increment numbered below every BACKLOG section, and without one, was closed before adoption (before)."""
+    ms_inc: dict[int, dict] = {}
     for m in snap["milestones"]:
         for i in m["increments"]:
-            if i["n"] not in have and re.match(r"(closed|done|accepted)", i["state"].strip().lower()):
-                before.append({"n": i["n"], "title": i["title"], "demo": i["demo"], "planned": [], "titles": {},
-                               "milestone": m["id"], "before": True, "state_text": i["state"]})
-                have.add(i["n"])
-    return sorted(before, key=lambda i: i["n"]) + incs
+            ms_inc.setdefault(i["n"], dict(i, milestone=m["id"]))
+    incs = [dict(i, milestone=ms_inc.get(i["n"], {}).get("milestone", ""), before=False, no_section=False)
+            for i in snap["backlog"]]
+    have = {i["n"] for i in incs}
+    first = min(have, default=None)
+    sources: dict[int, list[str]] = {}
+    for n in ms_inc:
+        sources.setdefault(n, []).append("MILESTONES.md")
+    for n in sorted({row_inc(f) for f in snap["features"]} - {None}):
+        sources.setdefault(n, []).append("FEATURES.json")
+    for n in sorted({k for r in snap["needs"] for k in inc_set(r.get("increment", ""))}):
+        sources.setdefault(n, []).append("NEEDS-HUMAN.md")
+    for n in sorted(set(sources) - have):
+        mi = ms_inc.get(n, {})
+        closed = closed_text(mi.get("state", ""))
+        before = closed and (first is None or n < first)
+        incs.append({"n": n, "title": mi.get("title", ""), "demo": mi.get("demo", ""), "planned": [], "titles": {},
+                     "milestone": mi.get("milestone", ""), "before": before, "no_section": not before,
+                     "closed": closed, "state_text": mi.get("state", ""), "sources": sources[n]})
+    return sorted(incs, key=lambda i: (not i["before"], i["n"]))
+
+
+def unsized(snap: dict, incs: list[dict]) -> list[dict]:
+    """Increments with neither slice rows in STATE.md nor proposed slices in BACKLOG.md: their size is unknown, so
+    progress() leaves them out of the percentage rather than counting a guessed slice, and the tile says so."""
+    return [i for i in incs if not i["before"] and not i["planned"]
+            and not [x for x in slices_of(snap, i["n"]) if credit(x) is not None]]
 
 
 def progress(snap: dict, incs: list[dict], cur_n: int) -> list[tuple[int, str, float, float]]:
-    """(n, title, total, done) in slice-equivalents for every backlog increment; earlier closed ones count as done."""
+    """(n, title, total, done) in slice-equivalents for every sized increment; earlier closed ones count as done.
+    Increments closed before adoption and unsized ones (see unsized()) are left out."""
     per = []
+    skip = {i["n"] for i in unsized(snap, incs)}
     for inc in incs:
-        if inc["before"]:
+        if inc["before"] or inc["n"] in skip:
             continue
         mine = [x for x in slices_of(snap, inc["n"]) if credit(x) is not None]
         if mine:
             per.append((inc["n"], inc["title"], float(len(mine)), sum(credit(x) for x in mine)))
         elif inc["n"] < cur_n:
-            k = float(len(inc["planned"]) or 1)
+            k = float(len(inc["planned"]))
             per.append((inc["n"], inc["title"], k, k))
         else:
-            per.append((inc["n"], inc["title"], float(len(inc["planned"]) or 1), 0.0))
+            per.append((inc["n"], inc["title"], float(len(inc["planned"])), 0.0))
     return per
 
 

@@ -20,7 +20,7 @@ The `architect` is a subagent or session that writes only the design surfaces; t
 
 ## Plan
 
-`MILESTONES.md` carries the ordered increments of the milestone with their exit demos; `BACKLOG.md` keeps the slices per increment (chapter 3). The Definition of Ready and the three preparation stages are chapter 4. Two activities were ad hoc in the first run and are now part of the method:
+`MILESTONES.md` carries the ordered increments of the milestone with their exit demos; `BACKLOG.md` keeps the slices per increment (chapter 3), in one `## Increment <n>: <title>` section per increment with its exit demo, scenarios, human acts and either its proposed slices or, once cut, its slice table. Every increment that `MILESTONES.md`, `FEATURES.json` or `NEEDS-HUMAN.md` names has its own section, however far ahead; a range heading (`## Increments 2 to 5`) is not allowed, and the design-doc lint fails both. Prevents: increments the plan and the owner's inbox refer to that the dashboard cannot show. The Definition of Ready and the three preparation stages are chapter 4. Two activities were ad hoc in the first run and are now part of the method:
 
 **Increment planning** (`plan-increment`), run by explorers before an increment starts: a **surface map** (what exists and what is missing for each planned slice, with file references), a **reuse audit** (reuse instead of rebuild, one line per slice), a **decoupling review** (seams to freeze first; cores that can start now on fixtures versus wires that wait for a merge; lanes per writer; hot files to serialize by rebase), and the dependency columns of the slice table filled. Prevents: slices rebuilt from scratch; writers colliding on one file; idle slots while slices could start.
 
