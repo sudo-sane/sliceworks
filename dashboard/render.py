@@ -179,7 +179,7 @@ a.tile.scov{color:inherit;text-decoration:none;cursor:pointer}a.tile.scov:hover{
 .v1n{font-style:normal;color:var(--work)}.pright{display:flex;align-items:baseline;gap:10px}.delta{color:var(--ok);white-space:nowrap}.tile.bad b{color:var(--bad)}
 .mini{display:block;height:5px;border-radius:3px;background:var(--idlebg);overflow:hidden;margin-top:3px}
 .mini span{display:block;height:100%;background:var(--fill)}.mini.full span{background:var(--ok)}
-.tile.warn .mini span{background:var(--warn)}.tile.bad .mini span{background:var(--bad)}
+.tile.warn .mini span{background:var(--warn)}.tile.bad .mini span{background:var(--bad)}.bblock{display:flex;flex-direction:column;gap:2px;min-width:0}.bblock+.bblock{border-top:1px solid var(--line);padding-top:6px;margin-top:4px}.bblock.warn b{color:var(--warn)}.bblock.bad b{color:var(--bad)}.bblock.warn .mini span{background:var(--warn)}.bblock.bad .mini span{background:var(--bad)}
 .hold{margin-top:8px;font-size:12px;color:var(--warn);background:var(--warnbg);padding:5px 9px;border-radius:6px}
 @media (max-width:760px){.tiles,.tiles.four{grid-template-columns:repeat(2,minmax(0,1fr))}.tile.prog,.tile.budget,.tile.scov{grid-column:1/-1}}
 h2{font-size:15px;margin:14px 0 4px}
@@ -650,35 +650,38 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
                  f'<div class="prow"><b>{prog:.0f}<span>%{" of sized" if uns else ""} · {done_steps:.1f}/{total_steps:g} slices</span></b>'
                  f'<span class="pright">{spark}{eta_html}</span></div><div class="psegs">{prog_segs}</div>{before_txt}{unsized_txt}</div>')
 
-    # ---- budget tile ----
-    bd = C.budget(snap, per, now)
-    reset_txt = esc(loc(bd["reset"] + dt.timedelta(seconds=30)).strftime("%a %H:%M")) if bd["reset"] else "UNKNOWN"
-    f5 = bd["five"]
-    h5 = (f'<small class="h5">5h {str(int(f5)) + "%" if isinstance(f5, (int, float)) else "—"} · ↻{esc(ts_short(snap["usage"].get("five_hour_reset")))}'
-          + (f' · reading {esc(hm(bd["at"]))}' if bd["at"] else "") + '</small>')
-    if not bd["known"]:
-        budget_tile = ('<div class="tile budget"><em>Weekly budget</em><b>UNKNOWN</b>'
-                       '<small class="fc">no usage reading in metrics/usage.jsonl</small></div>')
-    elif bd["fc"]:
-        fc, used, stop = bd["fc"], bd["used"], bd["stop"]
-        verdict = "backlog fits ✓" if fc["fits"] else f"backlog ≈{fc['reach_pct']:.0f}% this week"
-        vcls = "ok" if fc["fits"] else "warn"
-        tip = esc(f"used {used:.0f}% · the backlog needs ≈{fc['need']:.0f}% more ({fc['remaining']:.0f} slices × {fc['per_slice']:.1f}%) · "
-                  f"ends at ≈{fc['end']:.0f}% · hold {bd['hold']}% · stop {stop}% · ≈{fc['hours_left']:.0f} h of work left at today's burn"
-                  + (f" · sized increments only; {u_ns} not sized, not counted" if uns else ""))
-        spare = f"spare {fc['spare']:.0f}%" if fc["fits"] else f"short {-fc['spare']:.0f}%"
-        budget_tile = (f'<div class="tile budget {bd["kind"]}" title="{tip}"><em>Weekly budget · resets {reset_txt}</em>'
-                       f'<div class="prow"><b>{used:.0f}<span>%</span></b><span class="vchip {vcls}">{esc(verdict)}</span></div>'
-                       f'<div class="bbar"><i class="bu" style="width:{min(used, 100):.1f}%"></i>'
-                       f'<i class="bp" style="left:{min(used, 100):.1f}%;width:{max(min(fc["end"], 100) - used, 0):.1f}%"></i>'
-                       f'<i class="bmark" style="left:{min(stop, 100)}%" title="stop {stop}%"></i></div>'
-                       f'<div class="blegend"><span>used</span><span>backlog ≈{fc["need"]:.0f}%</span><span>{spare}</span></div>{h5}</div>')
-    else:
+    # ---- budget tile: one block per runtime ----
+    def budget_block(rt: str, usage: dict) -> str:
+        bd = C.budget(snap, per, now, usage)
+        name = f"Weekly budget · {rt}" if rt else "Weekly budget"
+        reset_txt = esc(loc(bd["reset"] + dt.timedelta(seconds=30)).strftime("%a %H:%M")) if bd["reset"] else "UNKNOWN"
+        f5 = bd["five"]
+        h5 = (f'<small class="h5">5h {str(int(f5)) + "%" if isinstance(f5, (int, float)) else "—"} · ↻{esc(ts_short(usage.get("five_hour_reset")))}'
+              + (f' · reading {esc(hm(bd["at"]))}' if bd["at"] else "") + '</small>')
+        if not bd["known"]:
+            where = f"no {esc(rt)} reading in metrics/usage*.jsonl" if rt else "no usage reading in metrics/usage.jsonl"
+            return f'<div class="bblock"><em>{esc(name)}</em><b>UNKNOWN</b><small class="fc">{where}</small></div>'
+        if bd["fc"]:
+            fc, used, stop = bd["fc"], bd["used"], bd["stop"]
+            verdict = "backlog fits ✓" if fc["fits"] else f"backlog ≈{fc['reach_pct']:.0f}% this week"
+            vcls = "ok" if fc["fits"] else "warn"
+            tip = esc(f"used {used:.0f}% · the backlog needs ≈{fc['need']:.0f}% more ({fc['remaining']:.0f} slices × {fc['per_slice']:.1f}%) · "
+                      f"ends at ≈{fc['end']:.0f}% · hold {bd['hold']}% · stop {stop}% · ≈{fc['hours_left']:.0f} h of work left at today's burn"
+                      + (f" · sized increments only; {u_ns} not sized, not counted" if uns else ""))
+            spare = f"spare {fc['spare']:.0f}%" if fc["fits"] else f"short {-fc['spare']:.0f}%"
+            return (f'<div class="bblock {bd["kind"]}" title="{tip}"><em>{esc(name)} · resets {reset_txt}</em>'
+                    f'<div class="prow"><b>{used:.0f}<span>%</span></b><span class="vchip {vcls}">{esc(verdict)}</span></div>'
+                    f'<div class="bbar"><i class="bu" style="width:{min(used, 100):.1f}%"></i>'
+                    f'<i class="bp" style="left:{min(used, 100):.1f}%;width:{max(min(fc["end"], 100) - used, 0):.1f}%"></i>'
+                    f'<i class="bmark" style="left:{min(stop, 100)}%" title="stop {stop}%"></i></div>'
+                    f'<div class="blegend"><span>used</span><span>backlog ≈{fc["need"]:.0f}%</span><span>{spare}</span></div>{h5}</div>')
         marks = (f'<i class="mark" style="left:{bd["hold"]}%" title="dispatch hold {bd["hold"]}%"></i>'
                  f'<i class="mark stop" style="left:{min(bd["stop"], 100)}%" title="stop line {bd["stop"]}%"></i>')
-        budget_tile = (f'<div class="tile budget {bd["kind"]}"><em>Weekly budget · resets {reset_txt}</em>'
-                       f'<b>{int(bd["used"])}<span>% used</span></b><i class="mini wb"><span style="width:{min(bd["used"], 100)}%"></span>{marks}</i>'
-                       + "".join(f'<small class="fc">{esc(t)}</small>' for t in bd["lines"]) + h5 + '</div>')
+        return (f'<div class="bblock {bd["kind"]}"><em>{esc(name)} · resets {reset_txt}</em>'
+                f'<b>{int(bd["used"])}<span>% used</span></b><i class="mini wb"><span style="width:{min(bd["used"], 100)}%"></span>{marks}</i>'
+                + "".join(f'<small class="fc">{esc(t)}</small>' for t in bd["lines"]) + h5 + '</div>')
+
+    budget_tile = '<div class="tile budget">' + "".join(budget_block(rt, u) for rt, u in C.budget_runtimes(snap)) + '</div>'
 
     # ---- money tile ----
     mo = C.money(snap)
