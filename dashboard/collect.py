@@ -428,6 +428,18 @@ def slice_activity(root: Path, outputs_dir: Path, slices: list[dict], events: li
 
 # ---- the snapshot ---------------------------------------------------------------------------------------------------
 
+def latest_by_runtime(rows: list[dict]) -> dict[str, dict]:
+    """The latest usage reading of each runtime. A project may keep one runtime's readings in usage-<runtime>.jsonl,
+    because the budget guard judges a dispatch by the last row of usage.jsonl whatever its runtime."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        rt = str(r.get("runtime") or "unnamed").lower()
+        t, old = parse_iso(r.get("at")), out.get(rt)
+        if old is None or (t and (parse_iso(old.get("at")) is None or t >= parse_iso(old.get("at")))):
+            out[rt] = r
+    return out
+
+
 def snapshot(root: Path, cfg: dict[str, str], state_dir: Path | None = None) -> dict:
     root = root.resolve()
     S = state_dir or (root / cfg.get("SW_STATE_DIR", "docs/process"))
@@ -435,6 +447,7 @@ def snapshot(root: Path, cfg: dict[str, str], state_dir: Path | None = None) -> 
     outputs_dir = root / cfg.get("SW_OUTPUTS_DIR", "outputs")
     state = state_md(read(S / "STATE.md"))
     usage_rows = jsonl(S / "metrics" / "usage.jsonl")
+    readings = usage_rows + [r for f in sorted((S / "metrics").glob("usage-*.jsonl")) for r in jsonl(f)]
     money_file = root / cfg["SW_MONEY_FILE"] if cfg.get("SW_MONEY_FILE") else S / "metrics" / "money.jsonl"
     decisions = decisions_md(read(S / "DECISIONS.md"))
     for d in decisions_md(read(S / "OWNER-DECISIONS.md")):
@@ -458,6 +471,7 @@ def snapshot(root: Path, cfg: dict[str, str], state_dir: Path | None = None) -> 
         "needs": needs_md(read(S / "NEEDS-HUMAN.md")),
         "decisions": decisions,
         "usage": usage_rows[-1] if usage_rows else {},
+        "usage_by_runtime": latest_by_runtime(readings),
         "money": jsonl(money_file),
         "tiers": jsonl(S / "metrics" / "tiers.jsonl"),
         "progress": progress_md(read(S / "PROGRESS.md")),

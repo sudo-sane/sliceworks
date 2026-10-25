@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.8
+
+- **Dashboard: one budget block per runtime.** A dual-profile field run showed only the Codex window: the page read the last row of `metrics/usage.jsonl`, and nothing recorded the Claude coordinator's plan windows. The budget tile now holds one block per runtime ("Weekly budget · claude", "Weekly budget · codex"), each from that runtime's latest reading in `usage.jsonl` or `usage-<runtime>.jsonl`. The dual profile always shows both, and a runtime with no reading says "no <runtime> reading" instead of disappearing. Forecast, holds and the five-hour line are per block. A project with one runtime keeps one block, named after it.
+- **`scripts/claude-usage-statusline.py`**: a Claude Code `statusLine` command that records the Claude plan windows. The status line's `rate_limits` (`five_hour` and `seven_day`, `used_percentage`, `resets_at` in epoch seconds; Pro and Max, after the first API response) is the only documented source; no credentials are read. Rows go to `<state dir>/metrics/usage-claude.jsonl` with runtime `claude` and event `tick`, when a value changes or every `SW_CLAUDE_READING_MINUTES` (default 15). They go to a separate file because the dispatch hook judges the last row of `usage.jsonl` whatever its runtime. The command prints `<model> · 5h <n>% · 7d <n>%`, is inert outside an adopted project, and never fails the line. It runs on Python 3.9.
+- Method chapter 8 names the per-runtime readings; `templates/config.env` gains `SW_CLAUDE_READING_MINUTES`.
+- Tests: two budget cases (one runtime; dual with a missing and then a recorded Claude reading), both failing on 0.8.7; four recorder cases (shape, throttle, inert, bad input).
+
 ## 0.8.7
 
 - **Dashboard: agent labels say what is expected.** On 0.8.6 a cut increment whose slices had not started read "agents UNKNOWN · UNKNOWN fresh tokens (partial)", while later increments showed nothing, so expected state looked like an error. The increment label and the slice cards now read:

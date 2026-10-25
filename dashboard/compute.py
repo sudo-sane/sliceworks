@@ -210,9 +210,17 @@ def delta(history: list[dict], prog: float, now: dt.datetime, tz: dt.tzinfo) -> 
     return {"delta": prog - float(base.get("p", 0)), "when": when, "points": pts}
 
 
-def budget(snap: dict, per: list, now: dt.datetime) -> dict:
+def budget_runtimes(snap: dict) -> list[tuple[str, dict]]:
+    """(runtime, latest reading) per runtime with a reading; the dual profile always shows claude and codex, so a
+    runtime without readings is visible. Without any named reading: one unnamed entry from usage.jsonl."""
+    by_rt = snap.get("usage_by_runtime") or {}
+    names = set(by_rt) | ({"claude", "codex"} if snap["config"].get("SW_PROFILE") == "dual" else set())
+    return [(rt, by_rt.get(rt, {})) for rt in sorted(names)] or [("", snap["usage"])]
+
+
+def budget(snap: dict, per: list, now: dt.datetime, usage: dict | None = None) -> dict:
     """Weekly window: used, thresholds, and a forecast of what the rest of the backlog costs at this week's burn."""
-    usage, th = snap["usage"], thresholds(snap["config"])
+    usage, th = snap["usage"] if usage is None else usage, thresholds(snap["config"])
     w = usage.get("weekly_pct")
     out = {"known": isinstance(w, (int, float)) and not isinstance(w, bool), "used": float(w or 0),
            "five": usage.get("five_hour_pct"), "reset": parse_iso(usage.get("weekly_reset")),
