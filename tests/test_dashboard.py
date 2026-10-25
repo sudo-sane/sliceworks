@@ -585,44 +585,57 @@ class AgentLabels(unittest.TestCase):
 
 
 class BudgetPerRuntime(unittest.TestCase):
-    """One budget block per runtime: the latest reading of each, from usage.jsonl and usage-<runtime>.jsonl."""
+    """One compact row per subscription, from each runtime's latest reading in usage.jsonl or usage-<runtime>.jsonl."""
 
-    def blocks(self, root):
+    def rows(self, root):
         _, _, page = render_fixture(root)
         tile = page.first("div", "tiles").first("div", "budget")
-        return [b.text_all() for b in tile.all("div", "bblock")]
+        return tile, tile.all("div", "rtb")
 
-    def test_single_runtime_project_keeps_one_block(self):
+    def dual(self, root, codex_at="2026-10-15T11:55:00Z"):
+        cfg = root / ".sliceworks/config.env"
+        cfg.write_text(cfg.read_text().replace("SW_PROFILE=full", "SW_PROFILE=dual") + "SW_CODEX_WEEKLY_STOP=95\n")
+        (root / "docs/process/metrics/usage.jsonl").write_text(json.dumps(
+            {"at": codex_at, "event": "dispatch", "runtime": "codex", "five_hour_pct": None, "weekly_pct": 8,
+             "weekly_reset": "2026-10-20T09:00:00Z"}) + "\n")
+
+    def test_single_runtime_project_keeps_one_row(self):
         tmp, root = copy_fixture("run")
         with tmp:
-            blocks = self.blocks(root)
-            self.assertEqual(len(blocks), 1)
-            self.assertIn("Weekly budget · claude", blocks[0])
-            self.assertIn("40", blocks[0])
+            tile, rows = self.rows(root)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].first("span", "rtl").text, "Claude")
+            self.assertIn("40", rows[0].first("b").text_all())
+            self.assertIn("hover for details", tile.first("em").text)
 
-    def test_dual_profile_shows_both_runtimes_and_names_a_missing_one(self):
+    def test_dual_profile_shows_both_subscriptions_and_names_a_missing_one(self):
         tmp, root = copy_fixture("run")
         with tmp:
-            cfg = root / ".sliceworks/config.env"
-            cfg.write_text(cfg.read_text().replace("SW_PROFILE=full", "SW_PROFILE=dual"))
-            usage = root / "docs/process/metrics/usage.jsonl"
-            usage.write_text(json.dumps({"at": "2026-10-15T11:55:00Z", "event": "dispatch", "runtime": "codex",
-                                         "five_hour_pct": None, "weekly_pct": 8, "weekly_reset": "2026-10-20T09:00:00Z"}) + "\n")
-            blocks = self.blocks(root)
-            self.assertEqual(len(blocks), 2)
-            self.assertIn("Weekly budget · claude", blocks[0])
-            self.assertIn("no claude reading", blocks[0])
-            self.assertIn("Weekly budget · codex", blocks[1])
-            self.assertIn("8", blocks[1])
+            self.dual(root)
+            _, rows = self.rows(root)
+            self.assertEqual([r.first("span", "rtl").text for r in rows], ["Claude", "Codex"])
+            self.assertIn("no reading", rows[0].text_all())
+            self.assertIn("8", rows[1].first("b").text_all())
+            self.assertIn("stop 95%", rows[1].attrs["title"])  # SW_CODEX_WEEKLY_STOP overrides the weekly stop
+            self.assertIn("Codex · Codex writers", rows[1].attrs["title"])
             (root / "docs/process/metrics/usage-claude.jsonl").write_text(
                 json.dumps({"at": "2026-10-15T11:00:00Z", "event": "tick", "runtime": "claude", "five_hour_pct": 12,
                             "weekly_pct": 33, "weekly_reset": "2026-10-20T06:00:00Z"}) + "\n"
                 + json.dumps({"at": "2026-10-15T11:58:00Z", "event": "tick", "runtime": "claude", "five_hour_pct": 14,
                               "weekly_pct": 35, "weekly_reset": "2026-10-20T06:00:00Z"}) + "\n")
-            blocks = self.blocks(root)
-            self.assertNotIn("UNKNOWN", blocks[0])
-            self.assertIn("35", blocks[0])
-            self.assertIn("5h 14%", blocks[0])
+            _, rows = self.rows(root)
+            self.assertNotIn("UNKNOWN", rows[0].text_all())
+            self.assertIn("35", rows[0].first("b").text_all())
+            self.assertIn("5h 14%", rows[0].attrs["title"])
+            self.assertIn("stop 85%", rows[0].attrs["title"])
+            self.assertNotIn("stale", rows[0].text_all())
+
+    def test_an_old_reading_is_marked_stale(self):
+        tmp, root = copy_fixture("run")
+        with tmp:
+            self.dual(root, codex_at="2026-10-15T09:00:00Z")
+            _, rows = self.rows(root)
+            self.assertIn("stale · 3 h old", rows[1].text_all())
 
 
 class Edges(unittest.TestCase):
