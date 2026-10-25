@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.7
+
+- **Dashboard: agent labels say what is expected.** On 0.8.6 a cut increment whose slices had not started read "agents UNKNOWN · UNKNOWN fresh tokens (partial)", while later increments showed nothing, so expected state looked like an error. The increment label and the slice cards now read:
+  - "no agent runs yet" when no slice of the increment has started;
+  - "agents in progress", or "<n> so far", while a slice is active, in repair, testing, a candidate or in review, because its counters arrive when the run ends;
+  - numbers when every run that ended has counters;
+  - UNKNOWN only where a run ended without counters.
+  - A tooltip on the label explains the words and the "(partial)" mark: the coordinator's own session is not counted.
+- Tests: three label cases on the run fixture (no counters, counters with a running slice, a cut increment not started). All three fail on 0.8.6.
+
 ## 0.8.6
 
 - **Dashboard: agent time and tokens from Codex worker logs.** A field run on 0.8.5 showed "agents UNKNOWN · UNKNOWN fresh tokens" on every increment, though both numbers were on disk. The collector read each native worker log (`<outputs>/slices/<slice>/codex/<role>-<ts>-<pid>.jsonl`) as its own source. Those logs have no `input_includes_cached` flag, so fresh input was never derived and one such event made the whole increment UNKNOWN. No event carried `active_seconds`, so time was never known. Codex also reports the thread's cumulative usage, so a resumed thread's later log repeats the earlier counters, and summing the logs would have overcounted (more than double for one slice of the field run).
