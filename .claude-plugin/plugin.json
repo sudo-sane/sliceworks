@@ -1,6 +1,6 @@
 {
   "name": "sliceworks",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "description": "An autonomous development life cycle for AI coding agents: milestones with ten phases from spark to learn, one ledger of checkable rows, a decisions ledger with classes and veto windows, worktree-isolated slice implementers behind frozen contracts, deterministic verification tiers, independent review, budget and money guards, and a human only for the acts a machine may not perform.",
   "author": {
     "name": "sudo-sane",
