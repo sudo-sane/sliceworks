@@ -138,7 +138,7 @@ Every adopted project gets the same page: the first run's dashboard, generated b
 
 ## Status
 
-0.8.5: allocation records, handoffs and the collector; Codex install paths and the copy installer; bound to the skills library, with a design procedure in the architect; the method book covers the whole life cycle and the entry sequence; the manifest, ten agents, hooks with a money guard, twenty skills, templates and schemas validate; the dashboard generator renders every adopted project's page; the survey script, the hook tests, the lint tests, the survey tests and the dashboard tests pass. The verification harness and the Python library follow (`docs/design/2026-10-12-extraction-analysis.md`, section 10; `docs/design/2026-10-12-lifecycle-coverage.md`, section 8).
+0.8.6: allocation records, handoffs and the collector; Codex install paths and the copy installer; bound to the skills library, with a design procedure in the architect; the method book covers the whole life cycle and the entry sequence; the manifest, ten agents, hooks with a money guard, twenty skills, templates and schemas validate; the dashboard generator renders every adopted project's page; the survey script, the hook tests, the lint tests, the survey tests and the dashboard tests pass. The verification harness and the Python library follow (`docs/design/2026-10-12-extraction-analysis.md`, section 10; `docs/design/2026-10-12-lifecycle-coverage.md`, section 8).
 
 ## Licence
 
