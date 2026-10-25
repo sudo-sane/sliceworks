@@ -76,6 +76,13 @@ def nh_item(r: dict, links: dict | None, words: int, show_inc: bool) -> str:
             f'<div class="nhbody"><p>{linkify(r.get("act", ""), links)}</p>{fields}</div></details></li>')
 
 
+# A slice whose agents may be mid-run: its counters arrive when the run ends.
+AGENT_RUNNING = ("active", "repair", "testing", "candidate", "review", "in_review")
+AGENTS_TIP = ("Agent time and fresh tokens of the slices' recorded runs. \"so far\" or \"in progress\": a slice is running and its "
+              "counters arrive when the run ends. UNKNOWN: a run ended without usage counters. Partial: the coordinator's own "
+              "session is not counted.")
+
+
 def fmt_dur(sec) -> str:
     sec = int(sec or 0)
     h, m = divmod(sec // 60, 60)
@@ -306,15 +313,34 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
         else:
             r["tokens_unknown"] = True
 
-    def eff_txt(sid: str) -> str:
+    def agents_txt(sl: list[dict], unit: str) -> str:
+        """Agent time and tokens over slices, in words a reader can act on: "no agent runs yet" before any slice
+        started, "so far" or "in progress" while one runs, UNKNOWN only where a run ended without counters."""
+        run = {x["id"] for x in sl if C.norm_state(x.get("state")) in AGENT_RUNNING}
+        ended = {x["id"] for x in sl if x["id"] not in run
+                 and (C.STATES.get(C.norm_state(x.get("state")), (-1,))[0] >= 1 or C.stamped(x.get("active")))}
+        es = {sid: eff[sid] for sid in run | ended if sid in eff}
+        if not run and not ended:
+            return "no agent runs yet"
+
+        def part(field, flag, fmt):
+            total = sum(e[field] for e in es.values())
+            if any(sid not in es or es[sid][flag] for sid in ended):
+                return "UNKNOWN"
+            if run:
+                return f"{fmt(total)} so far" if total else "in progress"
+            return fmt(total)
+        t_txt, k_txt = part("active_s", "active_unknown", fmt_dur), part("tokens", "tokens_unknown", fmt_tok)
+        return "agents in progress" if t_txt == k_txt == "in progress" else f"agents {t_txt} · {k_txt} {unit}"
+
+    def eff_txt(s: dict) -> str:
+        sid = s.get("id", "")
         e = eff.get(sid)
-        if not e:
+        if not e and C.norm_state(s.get("state")) not in AGENT_RUNNING:
             return ""
-        roles = "; ".join(f"{k}: {'UNKNOWN' if v['tokens_unknown'] else fmt_tok(v['tokens'])} tok" for k, v in e["roles"].items())
-        tip = f"{roles} · totals only when cache semantics are explicit; {coverage['detail']}"
-        t_txt = "UNKNOWN" if e["active_unknown"] else fmt_dur(e["active_s"])
-        k_txt = "UNKNOWN" if e["tokens_unknown"] else fmt_tok(e["tokens"])
-        return f'<span title="{esc(tip)}">agents {t_txt} · {k_txt} tok · {coverage["state"]}</span>'
+        roles = "; ".join(f"{k}: {'UNKNOWN' if v['tokens_unknown'] else fmt_tok(v['tokens'])} tok" for k, v in (e or {}).get("roles", {}).items())
+        tip = f"{roles + ' · ' if roles else ''}{AGENTS_TIP} {coverage['detail']}"
+        return f'<span title="{esc(tip)}">{agents_txt([s], "tok")} · {coverage["state"]}</span>'
 
     def elapsed(x: dict):
         a = parse_iso(x.get("active", ""))
@@ -430,7 +456,7 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
             t2 = ts_short(s.get("green", ""))
             line = f'merged {esc(ts_short(s.get("merged", "")))} · ' + (f"T2 green {esc(t2)}" if t2 else "T2 pending")
             el = elapsed(s)
-            line += (f" · took {fmt_dur(el)}" if el else "") + (f" · {eff_txt(sid)}" if eff_txt(sid) else "")
+            line += (f" · took {fmt_dur(el)}" if el else "") + (f" · {eff_txt(s)}" if eff_txt(s) else "")
             return f'<article class="slice compact" id="s-{esc(sid)}">{hdr}<div class="meta">{line}</div>{details}</article>'
         steps, last = [], ""
         for i, (key, label) in enumerate(C.STAGES):
@@ -452,8 +478,8 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
         el = elapsed(s)
         if el:
             bits.append(f"running {fmt_dur(el)}")
-        if eff_txt(sid):
-            bits.append(eff_txt(sid))
+        if eff_txt(s):
+            bits.append(eff_txt(s))
         if last:
             bits.append(esc(last))
         return (f'<article class="slice" id="s-{esc(sid)}">{hdr}<ol class="stepper">{"".join(steps)}</ol>'
@@ -545,13 +571,10 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
             body.append(f"<h4>Ledger rows</h4>{feature_list(rs)}")
         hum_needs = [r for r in open_needs if n in inc_set(r.get("increment", ""))]
         if mine:
-            totals = [e for k, e in eff.items() if k in {x["id"] for x in mine}]
-            tok_txt = "UNKNOWN" if not totals or any(e["tokens_unknown"] for e in totals) else fmt_tok(sum(e["tokens"] for e in totals))
-            time_txt = "UNKNOWN" if not totals or any(e["active_unknown"] for e in totals) else fmt_dur(sum(e["active_s"] for e in totals))
             t0 = parse_iso(incr.get("started_at", ""))
             seg_lbl = (f"slices merged {sum(1 for x in mine if C.norm_state(x.get('state')) in ('merged', 'green'))} / {len(mine)}"
                        + (f" · elapsed {fmt_dur((now - t0).total_seconds())}" if t0 and n == cur_n else "")
-                       + f" · agents {time_txt} · {tok_txt} fresh tokens (partial)")
+                       + f' · <span title="{esc(AGENTS_TIP)}">{agents_txt(mine, "fresh tokens (partial)")}</span>')
         else:
             seg_lbl = f"{len(inc['planned'])} proposed slices" if inc["planned"] else "slices not cut yet"
         eta = pc["inc_eta"].get(n, "")

@@ -529,6 +529,61 @@ class AgentCounters(unittest.TestCase):
         self.assertIsNone(act)
 
 
+class AgentLabels(unittest.TestCase):
+    """UNKNOWN is kept for a run that ended without counters; work not started or still running says so in words."""
+
+    def labels(self, root):
+        _, _, page = render_fixture(root)
+        incs = [d.text_all() for d in page.all("div", "barlbl") if "ledger rows" in d.text_all()]
+        cards = {a.attrs.get("id"): a.first("div", "meta").text_all() for a in page.all("article", "slice")}
+        return incs, cards
+
+    def event(self, root, slice_id, turn, inp, cached, out, active=None):
+        run = root / ".run"
+        run.mkdir(exist_ok=True)
+        row = {"runtime": "codex", "physical_source": "codex-rollout", "session_id": f"t-{slice_id}", "turn_id": turn,
+               "timestamp": "2026-10-15T09:00:00Z", "role": "slice-implementer", "slice": slice_id,
+               "usage": {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out, "input_includes_cached": True}}
+        if active is not None:
+            row["active_seconds"] = active
+        with (run / "agent-usage-events.jsonl").open("a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def test_without_counters_ended_runs_are_unknown_and_running_ones_in_progress(self):
+        tmp, root = copy_fixture("run")
+        with tmp:
+            incs, cards = self.labels(root)
+            self.assertIn("agents UNKNOWN · UNKNOWN fresh tokens", incs[0])  # slices 01, 02 merged, no counters
+            self.assertIn("agents in progress", incs[1])
+            self.assertNotIn("UNKNOWN", incs[1])
+            self.assertIn("agents in progress", cards["s-slice-03"])
+            self.assertNotIn("agents", cards["s-slice-05"])  # ready, never ran
+
+    def test_counted_runs_show_numbers_and_running_ones_so_far(self):
+        tmp, root = copy_fixture("run")
+        with tmp:
+            for sid in ("slice-01", "slice-02"):
+                self.event(root, sid, "r1", 2000, 1500, 500, active=600)
+            self.event(root, "slice-03", "r1", 3000, 2000, 1000)
+            self.event(root, "slice-04", "r1", 1000, 1000, 0, active=300)
+            incs, cards = self.labels(root)
+            self.assertIn("agents 20m · 2k fresh tokens (partial)", incs[0])
+            self.assertIn("agents 5m so far · 2k so far fresh tokens", incs[1])
+            self.assertIn("agents in progress · 2k so far tok", cards["s-slice-03"])
+
+    def test_cut_but_not_started_is_not_unknown(self):
+        tmp, root = copy_fixture("run")
+        with tmp:
+            p = root / "docs/process/STATE.md"
+            rows = {"slice-03": "| slice-03 | ready | | | 2026-10-15T07:00Z | | | | | | 0 | 0 | | search endpoint | 1 | - | - | api |",
+                    "slice-04": "| slice-04 | ready | | | 2026-10-15T07:00Z | | | | | | 0 | 0 | | import job | 1 | - | - | jobs |"}
+            p.write_text("\n".join(next((r for k, r in rows.items() if l.startswith(f"| {k} |")), l)
+                                   for l in p.read_text().splitlines()) + "\n")
+            incs, _ = self.labels(root)
+            self.assertIn("no agent runs yet", incs[1])
+            self.assertNotIn("UNKNOWN", incs[1])
+
+
 class Edges(unittest.TestCase):
     def test_unknown_state_is_visible(self):
         tmp, root = copy_fixture("run")
