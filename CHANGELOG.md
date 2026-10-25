@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.6
+
+- **Dashboard: agent time and tokens from Codex worker logs.** A field run on 0.8.5 showed "agents UNKNOWN · UNKNOWN fresh tokens" on every increment, though both numbers were on disk. The collector read each native worker log (`<outputs>/slices/<slice>/codex/<role>-<ts>-<pid>.jsonl`) as its own source. Those logs have no `input_includes_cached` flag, so fresh input was never derived and one such event made the whole increment UNKNOWN. No event carried `active_seconds`, so time was never known. Codex also reports the thread's cumulative usage, so a resumed thread's later log repeats the earlier counters, and summing the logs would have overcounted (2.1x in the field run).
+  - `dashboard/collect.py` reads each native log as one worker run: thread, last `turn.completed` usage (input includes cached input, as Codex reports it) and wall time from the stamp in the file name to the end time in `.done`. One record per (slice, thread) takes tokens from the latest run and time summed over runs. A worker still running leaves time UNKNOWN.
+  - Each quantity is counted once. Where `agent-usage-events.jsonl` already records a thread, its rows keep the tokens and the native record contributes 0. Where the worker's wall time is known, it covers the recorded rows of that thread and of its allocations (child threads run inside the worker), and those rows contribute 0 time. Recorded rows without a worker log keep time UNKNOWN.
+  - The role is parsed without the timestamp (`slice-implementer`, not `slice-implementer-<ts>`). The coverage note now says "incomplete" when any record lacks time.
+  - Tests: four collector cases (a resumed thread, a running worker, recorded rows with a worker log, recorded rows without one). Three fail on 0.8.5.
+
 ## 0.8.5
 
 - **Slice states: one vocabulary, linted.** A field run on 0.8.4 cut eleven slices with `plan-increment` and wrote them into `STATE.md` and `BACKLOG.md` as `planned`, a word the skill never forbade. The dashboard showed every one as "UNKNOWN planned". The dashboard's vocabulary also lacked three states of method chapter 3's slice lifecycle (`in_review`, `accepted`, `blocked_on_human`), so a project following the method to the letter hit the same banner.
