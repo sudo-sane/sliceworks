@@ -179,7 +179,7 @@ a.tile.scov{color:inherit;text-decoration:none;cursor:pointer}a.tile.scov:hover{
 .v1n{font-style:normal;color:var(--work)}.pright{display:flex;align-items:baseline;gap:10px}.delta{color:var(--ok);white-space:nowrap}.tile.bad b{color:var(--bad)}
 .mini{display:block;height:5px;border-radius:3px;background:var(--idlebg);overflow:hidden;margin-top:3px}
 .mini span{display:block;height:100%;background:var(--fill)}.mini.full span{background:var(--ok)}
-.tile.warn .mini span{background:var(--warn)}.tile.bad .mini span{background:var(--bad)}.bblock{display:flex;flex-direction:column;gap:2px;min-width:0}.bblock+.bblock{border-top:1px solid var(--line);padding-top:6px;margin-top:4px}.bblock.warn b{color:var(--warn)}.bblock.bad b{color:var(--bad)}.bblock.warn .mini span{background:var(--warn)}.bblock.bad .mini span{background:var(--bad)}
+.tile.warn .mini span{background:var(--warn)}.tile.bad .mini span{background:var(--bad)}.rtb{display:grid;grid-template-columns:46px minmax(30px,max-content) minmax(0,1fr) auto auto;align-items:center;gap:6px;margin-top:4px;cursor:help}.rtb b{font-size:16px}.rtb b span{font-size:11px}.rtb .bbar{margin:0;height:8px}.rtb .bbar .mark{z-index:1}.rtb .vchip{font-size:10.5px;padding:1px 6px}.rtb.warn b{color:var(--warn)}.rtb.bad b{color:var(--bad)}.rth{font-size:11px;color:var(--muted);white-space:nowrap}
 .hold{margin-top:8px;font-size:12px;color:var(--warn);background:var(--warnbg);padding:5px 9px;border-radius:6px}
 @media (max-width:760px){.tiles,.tiles.four{grid-template-columns:repeat(2,minmax(0,1fr))}.tile.prog,.tile.budget,.tile.scov{grid-column:1/-1}}
 h2{font-size:15px;margin:14px 0 4px}
@@ -650,38 +650,50 @@ def page(snap: dict, now: dt.datetime, history: list[dict] | None = None) -> str
                  f'<div class="prow"><b>{prog:.0f}<span>%{" of sized" if uns else ""} · {done_steps:.1f}/{total_steps:g} slices</span></b>'
                  f'<span class="pright">{spark}{eta_html}</span></div><div class="psegs">{prog_segs}</div>{before_txt}{unsized_txt}</div>')
 
-    # ---- budget tile: one block per runtime ----
-    def budget_block(rt: str, usage: dict) -> str:
-        bd = C.budget(snap, per, now, usage)
-        name = f"Weekly budget · {rt}" if rt else "Weekly budget"
-        reset_txt = esc(loc(bd["reset"] + dt.timedelta(seconds=30)).strftime("%a %H:%M")) if bd["reset"] else "UNKNOWN"
-        f5 = bd["five"]
-        h5 = (f'<small class="h5">5h {str(int(f5)) + "%" if isinstance(f5, (int, float)) else "—"} · ↻{esc(ts_short(usage.get("five_hour_reset")))}'
-              + (f' · reading {esc(hm(bd["at"]))}' if bd["at"] else "") + '</small>')
-        if not bd["known"]:
-            where = f"no {esc(rt)} reading in metrics/usage*.jsonl" if rt else "no usage reading in metrics/usage.jsonl"
-            return f'<div class="bblock"><em>{esc(name)}</em><b>UNKNOWN</b><small class="fc">{where}</small></div>'
-        if bd["fc"]:
-            fc, used, stop = bd["fc"], bd["used"], bd["stop"]
-            verdict = "backlog fits ✓" if fc["fits"] else f"backlog ≈{fc['reach_pct']:.0f}% this week"
-            vcls = "ok" if fc["fits"] else "warn"
-            tip = esc(f"used {used:.0f}% · the backlog needs ≈{fc['need']:.0f}% more ({fc['remaining']:.0f} slices × {fc['per_slice']:.1f}%) · "
-                      f"ends at ≈{fc['end']:.0f}% · hold {bd['hold']}% · stop {stop}% · ≈{fc['hours_left']:.0f} h of work left at today's burn"
-                      + (f" · sized increments only; {u_ns} not sized, not counted" if uns else ""))
-            spare = f"spare {fc['spare']:.0f}%" if fc["fits"] else f"short {-fc['spare']:.0f}%"
-            return (f'<div class="bblock {bd["kind"]}" title="{tip}"><em>{esc(name)} · resets {reset_txt}</em>'
-                    f'<div class="prow"><b>{used:.0f}<span>%</span></b><span class="vchip {vcls}">{esc(verdict)}</span></div>'
-                    f'<div class="bbar"><i class="bu" style="width:{min(used, 100):.1f}%"></i>'
-                    f'<i class="bp" style="left:{min(used, 100):.1f}%;width:{max(min(fc["end"], 100) - used, 0):.1f}%"></i>'
-                    f'<i class="bmark" style="left:{min(stop, 100)}%" title="stop {stop}%"></i></div>'
-                    f'<div class="blegend"><span>used</span><span>backlog ≈{fc["need"]:.0f}%</span><span>{spare}</span></div>{h5}</div>')
-        marks = (f'<i class="mark" style="left:{bd["hold"]}%" title="dispatch hold {bd["hold"]}%"></i>'
-                 f'<i class="mark stop" style="left:{min(bd["stop"], 100)}%" title="stop line {bd["stop"]}%"></i>')
-        return (f'<div class="bblock {bd["kind"]}"><em>{esc(name)} · resets {reset_txt}</em>'
-                f'<b>{int(bd["used"])}<span>% used</span></b><i class="mini wb"><span style="width:{min(bd["used"], 100)}%"></span>{marks}</i>'
-                + "".join(f'<small class="fc">{esc(t)}</small>' for t in bd["lines"]) + h5 + '</div>')
+    # ---- budget tile: one compact row per subscription, details in the tooltip ----
+    dual = cfg.get("SW_PROFILE") == "dual"
+    roles = {"claude": "coordinator and reviewers", "codex": "Codex writers"} if dual else {}
+    try:
+        max_age = dt.timedelta(seconds=int(cfg.get("SW_READING_MAX_AGE", "5400") or 5400))
+    except ValueError:
+        max_age = dt.timedelta(seconds=5400)
 
-    budget_tile = '<div class="tile budget">' + "".join(budget_block(rt, u) for rt, u in C.budget_runtimes(snap)) + '</div>'
+    def runtime_row(rt: str, usage: dict) -> str:
+        short = rt.capitalize() if rt else "Weekly"
+        label = f"{short} · {roles[rt]}" if rt in roles else short
+        bd = C.budget(snap, per, now, usage, rt)
+        hold, stop = bd["hold"], bd["stop"]
+        if not bd["known"]:
+            where = f"no {rt} reading in metrics/usage*.jsonl" if rt else "no usage reading in metrics/usage.jsonl"
+            return (f'<div class="rtb warn" title="{esc(label)}: {esc(where)}"><span class="rtl">{esc(short)}</span><b>—</b>'
+                    f'<i class="bbar wb"></i><small class="rth"></small><span class="vchip warn">UNKNOWN · no reading</span></div>')
+        used, f5, fc = bd["used"], bd["five"], bd["fc"]
+        age = now - bd["at"] if bd["at"] else None
+        stale = age is None or age > max_age
+        age_txt = ("no time" if age is None else f"{int(age.total_seconds() // 3600)} h old" if age >= dt.timedelta(hours=2)
+                   else f"{int(age.total_seconds() // 60)} min old")
+        reset_txt = loc(bd["reset"] + dt.timedelta(seconds=30)).strftime("%a %H:%M") if bd["reset"] else "—"
+        tip = "\n".join([label, f"weekly {used:.0f}% used · resets {reset_txt}",
+                          *([f'5h {int(f5)}% · ↻{ts_short(usage.get("five_hour_reset"))}'] if isinstance(f5, (int, float)) else []),
+                          f"dispatch hold {hold}% · stop {stop}%", f"reading {age_txt}" + (" (stale)" if stale else ""), *bd["lines"]]
+                         + ([f"sized increments only; {u_ns} not sized, not counted"] if uns and fc else []))
+        proj = ""
+        hours = (f'{fc["hours_left"]:.0f} h · ' if fc and fc["hours_left"] > 0 else "")
+        side = (f'<small class="rth" title="hours of work to the stop line at this week\'s burn; weekly reset">'
+                f'{hours}↻{esc(reset_txt)}</small>')
+        if fc:
+            end = min(fc["end"], 100)
+            proj = (f'<i class="bp" style="left:{min(used, 100):.1f}%;width:{max(end - min(used, 100), 0):.1f}%" '
+                    f'title="backlog projection: ends at ≈{fc["end"]:.0f}% of the week ({"fits" if fc["fits"] else "over the stop line"})"></i>')
+        marks = (f'<i class="mark" style="left:{hold}%" title="dispatch hold {hold}%"></i>'
+                 f'<i class="mark stop" style="left:{min(stop, 100)}%" title="stop line {stop}%"></i>')
+        chip = f'<span class="vchip warn">stale · {esc(age_txt)}</span>' if stale else ""
+        return (f'<div class="rtb {bd["kind"]}" title="{esc(tip)}"><span class="rtl">{esc(short)}</span>'
+                f'<b>{int(used)}<span>%</span></b>'
+                f'<i class="bbar wb"><i class="bu" style="width:{min(used, 100):.1f}%"></i>{proj}{marks}</i>{side}{chip}</div>')
+
+    rows_html = "".join(runtime_row(rt, u) for rt, u in C.budget_runtimes(snap))
+    budget_tile = f'<div class="tile budget"><em>Weekly budget · hover for details</em>{rows_html}</div>'
 
     # ---- money tile ----
     mo = C.money(snap)

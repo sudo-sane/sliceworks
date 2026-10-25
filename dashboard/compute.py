@@ -91,8 +91,13 @@ def pct_int(v, default: int) -> int:
     return n if 0 <= n <= 100 else default
 
 
-def thresholds(cfg: dict) -> dict[str, int]:
-    return {"hold": pct_int(cfg.get("SW_WEEKLY_DISPATCH_HOLD"), 80), "stop": pct_int(cfg.get("SW_WEEKLY_STOP"), 85),
+def thresholds(cfg: dict, rt: str = "") -> dict[str, int]:
+    """Hold and stop lines; SW_<RUNTIME>_WEEKLY_DISPATCH_HOLD and _STOP override the weekly pair for one runtime."""
+    hold, stop = pct_int(cfg.get("SW_WEEKLY_DISPATCH_HOLD"), 80), pct_int(cfg.get("SW_WEEKLY_STOP"), 85)
+    if rt:
+        hold = pct_int(cfg.get(f"SW_{rt.upper()}_WEEKLY_DISPATCH_HOLD"), hold)
+        stop = pct_int(cfg.get(f"SW_{rt.upper()}_WEEKLY_STOP"), stop)
+    return {"hold": hold, "stop": stop,
             "hold5": pct_int(cfg.get("SW_FIVE_HOUR_DISPATCH_HOLD"), 90), "stop5": pct_int(cfg.get("SW_FIVE_HOUR_STOP"), 100)}
 
 
@@ -218,9 +223,9 @@ def budget_runtimes(snap: dict) -> list[tuple[str, dict]]:
     return [(rt, by_rt.get(rt, {})) for rt in sorted(names)] or [("", snap["usage"])]
 
 
-def budget(snap: dict, per: list, now: dt.datetime, usage: dict | None = None) -> dict:
+def budget(snap: dict, per: list, now: dt.datetime, usage: dict | None = None, rt: str = "") -> dict:
     """Weekly window: used, thresholds, and a forecast of what the rest of the backlog costs at this week's burn."""
-    usage, th = snap["usage"] if usage is None else usage, thresholds(snap["config"])
+    usage, th = snap["usage"] if usage is None else usage, thresholds(snap["config"], rt)
     w = usage.get("weekly_pct")
     out = {"known": isinstance(w, (int, float)) and not isinstance(w, bool), "used": float(w or 0),
            "five": usage.get("five_hour_pct"), "reset": parse_iso(usage.get("weekly_reset")),
