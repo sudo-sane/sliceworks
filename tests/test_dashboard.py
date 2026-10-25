@@ -457,6 +457,78 @@ class IncrementsFixture(unittest.TestCase):
         self.assertIsNone(page.first("span", "pun"))
 
 
+class AgentCounters(unittest.TestCase):
+    """Codex native worker logs carry the thread's cumulative usage (input includes cached) and no timestamps."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.run, self.outputs = self.root / "run", self.root / "outputs"
+        self.run.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def native(self, stamp, end, inp, cached, out, thread="t-1", slice_id="slice-01-a"):
+        d = self.outputs / "slices" / slice_id / "codex"
+        d.mkdir(parents=True, exist_ok=True)
+        base = d / f"slice-implementer-{stamp}-4242"
+        lines = [{"type": "thread.started", "thread_id": thread}, {"type": "turn.started"},
+                 {"type": "turn.completed", "usage": {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out}}]
+        base.with_suffix(".jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+        if end:
+            base.with_suffix(".done").write_text(f"0 {end}\n")
+
+    def recorded(self, *rows):
+        with (self.run / "agent-usage-events.jsonl").open("a") as f:
+            for session, alloc, inp, cached, out in rows:
+                f.write(json.dumps({"runtime": "codex", "physical_source": "codex-rollout", "session_id": session,
+                                    "turn_id": f"{alloc}/round-1", "timestamp": "2026-10-15T10:30:00Z",
+                                    "role": "slice-implementer", "slice": "slice-01-a", "allocation": alloc,
+                                    "usage": {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out,
+                                              "input_includes_cached": True}}) + "\n")
+
+    def totals(self):
+        events, coverage = collect.agent_usage(self.root, self.run, self.outputs)
+        mine = [e for e in events if e["slice"] == "slice-01-a"]
+        tok = None if any(e["tokens"] is None for e in mine) else sum(e["tokens"] for e in mine)
+        act = None if any(e["active_s"] is None for e in mine) else sum(e["active_s"] for e in mine)
+        return mine, tok, act, coverage
+
+    def test_resumed_thread_counts_its_latest_cumulative_counter_and_every_run_time(self):
+        self.native("20261015T100000Z", "2026-10-15T10:10:00Z", 1000, 900, 50)
+        self.native("20261015T102000Z", "2026-10-15T10:25:00Z", 3000, 2600, 120)
+        mine, tok, act, coverage = self.totals()
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]["role"], "slice-implementer")
+        self.assertEqual(tok, 3000 - 2600 + 120)
+        self.assertNotEqual(tok, (1000 - 900 + 50) + (3000 - 2600 + 120))  # summing cumulative counters double-counts
+        self.assertEqual(act, 15 * 60)
+        self.assertNotIn("incomplete", coverage["detail"])
+
+    def test_running_worker_leaves_time_unknown(self):
+        self.native("20261015T100000Z", "2026-10-15T10:10:00Z", 1000, 900, 50)
+        self.native("20261015T102000Z", None, 3000, 2600, 120)
+        _, tok, act, coverage = self.totals()
+        self.assertEqual(tok, 520)
+        self.assertIsNone(act)
+        self.assertIn("incomplete", coverage["detail"])
+
+    def test_recorded_rows_keep_tokens_and_the_worker_supplies_time(self):
+        self.native("20261015T100000Z", "2026-10-15T10:10:00Z", 3000, 2600, 120, thread="root")
+        self.recorded(("root", "alloc-1", 3000, 2600, 120), ("child", "alloc-1", 500, 450, 10))
+        mine, tok, act, _ = self.totals()
+        self.assertEqual(tok, (400 + 120) + (50 + 10))
+        self.assertEqual(act, 10 * 60)
+        self.assertEqual(len(mine), 3)
+
+    def test_recorded_rows_without_a_worker_log_stay_unknown_in_time(self):
+        self.recorded(("root", "alloc-1", 3000, 2600, 120))
+        _, tok, act, _ = self.totals()
+        self.assertEqual(tok, 520)
+        self.assertIsNone(act)
+
+
 class Edges(unittest.TestCase):
     def test_unknown_state_is_visible(self):
         tmp, root = copy_fixture("run")

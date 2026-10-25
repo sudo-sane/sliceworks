@@ -297,10 +297,16 @@ def usage_components(usage) -> dict | None:
             "tokens": tokens, "partial": tokens is None}
 
 
-def _native_counter_events(path: Path, label: str):
-    """Counter-only Codex events from a per-slice native log (<outputs>/slices/<slice>/codex/<role>-*.jsonl)."""
-    thread_id = None
-    for line_no, line in enumerate(read(path).splitlines(), 1):
+NATIVE_LOG = re.compile(r"^(?P<role>.+)-(?P<start>\d{8}T\d{6}Z)-\d+$")  # dispatch.sh: <role>-<UTC stamp>-<pid>.jsonl
+
+
+def _native_run(path: Path) -> dict | None:
+    """One Codex worker run from its native log (<outputs>/slices/<slice>/codex/<role>-<ts>-<pid>.jsonl, written by
+    dispatch.sh): thread id, the last turn.completed usage, and wall time from the stamp in the file name to the end
+    time in the .done file (absent while the worker runs). Codex reports the thread's cumulative usage with input
+    including cached input, so a resumed thread's later log repeats the counters of its earlier logs."""
+    thread_id, usage = None, None
+    for line in read(path).splitlines():
         try:
             event = json.loads(line)
         except ValueError:
@@ -316,45 +322,76 @@ def _native_counter_events(path: Path, label: str):
             continue
         completed = (event.get("turn") or {}).get("completed") if isinstance(event.get("turn"), dict) else event.get("turn.completed")
         if not isinstance(completed, dict) and event.get("type") == "turn.completed":
-            completed = {"turn_id": event.get("turn_id"), "timestamp": event.get("timestamp"), "usage": event.get("usage")}
-        if not isinstance(completed, dict) or not isinstance(completed.get("usage"), dict) or not thread_id:
-            continue
-        yield {"runtime": "codex", "physical_source": label, "session_id": thread_id,
-               "turn_id": str(completed.get("turn_id") or line_no), "timestamp": completed.get("timestamp", event.get("timestamp", "")),
-               "role": path.stem.rsplit("-", 1)[0], "slice": path.parent.parent.name, "usage": completed["usage"]}
+            completed = {"usage": event.get("usage")}
+        if isinstance(completed, dict) and isinstance(completed.get("usage"), dict):
+            usage = {"input_includes_cached": True, **completed["usage"]}
+    if not thread_id or not usage:
+        return None
+    m = NATIVE_LOG.match(path.stem)
+    start = dt.datetime.strptime(m.group("start"), "%Y%m%dT%H%M%SZ").replace(tzinfo=dt.timezone.utc) if m else None
+    done = read(path.with_suffix(".done")).split()
+    end = parse_iso(done[1]) if len(done) > 1 else None
+    active = int((end - start).total_seconds()) if start and end and end >= start else None
+    return {"thread": thread_id, "slice": path.parent.parent.name, "role": m.group("role") if m else path.stem,
+            "start": start, "end": end, "active_s": active, "usage": usage}
 
 
 def agent_usage(root: Path, run_dir: Path, outputs_dir: Path) -> tuple[list[dict], dict]:
     records: dict[tuple, dict] = {}
     sources, runtimes, partial = set(), set(), False
-    paths = [run_dir / "agent-usage-events.jsonl"] + sorted((outputs_dir / "slices").glob("*/codex/*.jsonl"))
-    for path in paths:
-        if "/codex/" in path.as_posix():
-            try:
-                label = str(path.relative_to(root))
-            except ValueError:
-                label = str(path)
-            events = _native_counter_events(path, label)
-        else:
-            events = jsonl(path)
-        for event in events:
-            runtime = str(event.get("runtime", "")).lower()
-            source, session, turn = event.get("physical_source"), event.get("session_id"), event.get("turn_id")
-            comp = usage_components(event.get("usage"))
-            stamp = parse_iso(event.get("timestamp", ""))
-            if runtime not in EXPECTED_RUNTIMES or not all(isinstance(x, str) and x for x in (source, session, turn)) or not comp:
-                continue
-            key = (source, runtime, session, turn)
-            cand = {"slice": event.get("slice"), "role": str(event.get("role", "agent")), "runtime": runtime,
-                    "start": stamp.isoformat() if stamp else "", "end": stamp.isoformat() if stamp else "",
-                    "active_s": _count(event.get("active_seconds")), **comp}
-            old = records.get(key)
-            if old and event.get("cumulative") is True and all(
-                    isinstance(cand[k], int) and isinstance(old[k], int) and cand[k] >= old[k] for k in ("input", "cached_input", "output")):
-                records[key] = cand
-            elif not old:
-                records[key] = cand
-            sources.add(source); runtimes.add(runtime); partial |= cand["partial"] or stamp is None
+    for event in jsonl(run_dir / "agent-usage-events.jsonl"):
+        runtime = str(event.get("runtime", "")).lower()
+        source, session, turn = event.get("physical_source"), event.get("session_id"), event.get("turn_id")
+        comp = usage_components(event.get("usage"))
+        stamp = parse_iso(event.get("timestamp", ""))
+        if runtime not in EXPECTED_RUNTIMES or not all(isinstance(x, str) and x for x in (source, session, turn)) or not comp:
+            continue
+        key = (source, runtime, session, turn)
+        cand = {"slice": event.get("slice"), "role": str(event.get("role", "agent")), "runtime": runtime,
+                "session": session, "allocation": event.get("allocation"),
+                "start": stamp.isoformat() if stamp else "", "end": stamp.isoformat() if stamp else "",
+                "active_s": _count(event.get("active_seconds")), **comp}
+        old = records.get(key)
+        if old and event.get("cumulative") is True and all(
+                isinstance(cand[k], int) and isinstance(old[k], int) and cand[k] >= old[k] for k in ("input", "cached_input", "output")):
+            records[key] = cand
+        elif not old:
+            records[key] = cand
+        sources.add(source); runtimes.add(runtime); partial |= cand["partial"] or stamp is None
+
+    # Native worker logs, one record per (slice, thread): tokens from the latest run (counters are cumulative), time
+    # summed over runs. Recorded rows for the same Codex thread already hold its tokens, and the worker's wall time
+    # covers the recorded rows of that thread's allocations (child threads run inside the worker), so each quantity
+    # is counted once: native tokens become 0 where recorded, recorded time becomes 0 where the native time is known.
+    runs: dict[tuple, list[dict]] = {}
+    for path in sorted((outputs_dir / "slices").glob("*/codex/*.jsonl")):
+        run = _native_run(path)
+        if run:
+            runs.setdefault((run["slice"], run["thread"]), []).append(run)
+    recorded = [r for r in records.values() if r["runtime"] == "codex"]
+    recorded_threads = {r["session"] for r in recorded}
+    timed_threads = {r["session"] for r in recorded if isinstance(r["active_s"], int)}
+    for (slice_id, thread), group in runs.items():
+        group.sort(key=lambda r: r["start"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc))
+        comp = usage_components(group[-1]["usage"])
+        if thread in recorded_threads:
+            comp.update(input=0, cached_input=0, output=0, tokens=0, partial=False)
+        times = [r["active_s"] for r in group]
+        active = sum(times) if all(isinstance(t, int) for t in times) else None
+        if thread in timed_threads:
+            active = 0
+        stamp = group[-1]["end"]
+        records[("codex-exec", "codex", thread, slice_id)] = {
+            "slice": slice_id, "role": group[-1]["role"], "runtime": "codex", "session": thread, "allocation": None,
+            "start": group[0]["start"].isoformat() if group[0]["start"] else "", "end": stamp.isoformat() if stamp else "",
+            "active_s": active, **comp}
+        sources.add("codex-exec"); runtimes.add("codex"); partial |= comp["partial"] or active is None
+    timed = {thread for (_, thread), group in runs.items() if all(isinstance(r["active_s"], int) for r in group)}
+    timed_allocs = {r["allocation"] for r in recorded if r["session"] in timed and r["allocation"]}
+    for r in recorded:
+        if r["active_s"] is None and (r["session"] in timed or (r["allocation"] and r["allocation"] in timed_allocs)):
+            r["active_s"] = 0
+    partial |= any(r["active_s"] is None for r in records.values())
     out = list(records.values())
     missing = [x for x in EXPECTED_RUNTIMES if x not in runtimes]
     detail = "linked counter metadata" if out else "no linked runtime usage metadata"
