@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.9
+
+- **STOP permits bounded read-only inspection.** The kill-switch hook now uses a bundled, non-executing command classifier for an explicit set of file, search, Git and GitHub reads. Writes, opaque scripts, shell composition and unknown commands still deny. Missing or broken classification fails closed.
+- STOP also rejects worker messages before budget and explorer exemptions, so reading a stopped run does not restart it. Native Codex shell input and copy-installed hooks retain the same policy.
+- Codex argv normalization no longer depends on JSON whitespace and unwraps only supported system shell paths; a foreign shell wrapper cannot masquerade as an inspection command.
+- Regression tests cover 65 accepted/refused command forms plus shell expansion and redirection, option-value bypasses, malformed input, inert/unset/disabled hooks, worker dispatch, missing classifiers and copy-install paths.
+
 ## 0.8.8
 
 - **Dashboard: one budget row per subscription.** A dual-profile field run showed only the Codex window: the page read the last row of `metrics/usage.jsonl`, and nothing recorded the Claude coordinator's plan windows. The tile is now "Weekly budget · hover for details", with one compact row per runtime: name, percent used, a bar (used, the backlog projection striped, the dispatch-hold and stop marks), hours of work to the stop line and the weekly reset. A "stale · <age>" chip appears when the reading is older than `SW_READING_MAX_AGE`. The tooltip holds the role, five-hour window, lines, the reading's age and the forecast. Each row comes from that runtime's latest reading in `usage.jsonl` or `usage-<runtime>.jsonl`. The dual profile always shows Claude and Codex, and a runtime without a reading reads "UNKNOWN · no reading". `SW_<RUNTIME>_WEEKLY_DISPATCH_HOLD` and `_STOP` override the weekly lines for one runtime. The layout follows the first run's page.

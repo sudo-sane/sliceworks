@@ -7,6 +7,7 @@ sw_plugin_hooks_enabled || exit 0
 tool="$(sw_field '.tool_name')"; hit=0
 for t in $SW_DISPATCH_TOOLS; do case "$tool" in *"$t"*) hit=1;; esac; done
 [ "$hit" = 1 ] || exit 0
+[ ! -f "$SW_ROOT/$SW_STOP_FILE" ] || sw_deny "STOP kill switch present at $SW_ROOT/$SW_STOP_FILE. Dispatch and worker messages are halted, including read-only explorers."
 if [ "$tool" = "Agent" ]; then
   type="$(sw_field '.tool_input.subagent_type')"
   for e in $SW_EXPLORER_AGENTS; do [ "$type" = "$e" ] && exit 0; done

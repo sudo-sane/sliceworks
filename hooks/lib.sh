@@ -16,11 +16,10 @@ sw_normalize() {
   # Codex hook input -> the shape the hook bodies read (Claude Code's). Shell tools become Bash with a string command;
   # apply_patch becomes Edit with file_path (the first file the patch names) and file_paths (all of them); spawn_agent
   # becomes Agent with subagent_type. Claude Code input passes through unchanged. The native name stays in tool_name_native.
-  case "$input" in *apply_patch*|*exec_command*|*local_shell*|*spawn_agent*|*'"cmd"'*|*'"command":['*) ;; *) return 0;; esac
   local n
   n="$(printf '%s' "$input" | jq -c '
     def cmd: (.tool_input.command // .tool_input.cmd // null)
-      | if type == "array" then (if length >= 3 and (.[0] | tostring | test("(^|/)(ba|z|da)?sh$")) and (.[1] == "-lc" or .[1] == "-c") then .[2] else map(tostring) | join(" ") end) else . end;
+      | if type == "array" then (if length == 3 and (.[0] | tostring | test("^(?:(?:/bin/|/usr/bin/|/usr/local/bin/|/opt/homebrew/bin/)?(?:bash|zsh|dash|sh))$")) and (.[1] == "-lc" or .[1] == "-c") then .[2] else map(tostring) | join(" ") end) else . end;
     def patchtext: (.tool_input.patch // .tool_input.input // .tool_input.command // "") | if type == "string" then . else "" end;
     def patchfiles: [patchtext | scan("\\*\\*\\* (?:Add File|Update File|Delete File|Move to): ([^\\n]+)") | .[0]];
     (.tool_name // "") as $t

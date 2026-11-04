@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Bash|Edit|Write|MultiEdit",
+        "matcher": "Agent|Task|Bash|Edit|Write|MultiEdit|SendMessage|.*send_message.*|.*SendMessage.*|.*spawn_agent.*|.*followup_task.*|.*create_thread.*|.*handoff_thread.*",
         "hooks": [
           {
             "type": "command",
