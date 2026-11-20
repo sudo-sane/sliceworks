@@ -130,12 +130,13 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir):
             if same_log or row_head in (head, head[:8]):
                 matching.append((row, same_log))
         if scoped:
-            valid = [row for row, same_log in matching if same_log and row.get("head_full") == head
-                     and row.get("base") == alloc["base"] and row.get("slice") == alloc["slice"]
-                     and row.get("tier") == "t1" and row.get("accepted_base") == alloc["accepted_base"]]
-            if (not valid or valid[-1].get("result") != "pass"
-                    or type(valid[-1].get("exit_code")) is not int or valid[-1]["exit_code"] != 0):
-                return False, "no matching passing execution row for the named log, source and base"
+            latest = next((row for row, same_log in reversed(matching) if same_log), {})
+            expected = {"head_full": head, "base": alloc["base"], "accepted_base": alloc["accepted_base"],
+                        "slice": alloc["slice"], "allocation": alloc["id"], "worktree": str(wt.resolve()),
+                        "tier": "t1", "result": "pass", "exit_code": 0}
+            if (type(latest.get("exit_code")) is not int
+                    or any(latest.get(key) != value for key, value in expected.items())):
+                return False, "latest row for the named log does not prove this allocation, checkout and source"
             return True, f"{log} RESULT=pass (matching tier row)"
         named = any(same_log for _, same_log in matching)
         legacy = [row for row, same_log in matching if (same_log if named else not row.get("log"))

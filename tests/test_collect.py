@@ -73,7 +73,7 @@ class Collector(unittest.TestCase):
         (self.root / "docs/process/metrics/tiers.jsonl").write_text(json.dumps({"tier": "t1", "head": head[:8], "result": "pass"}) + "\n")
         self.assertIn("DONE", run(self.root))
 
-    def test_scoped_tier_requires_named_log_full_source_base_and_actual_exit(self):
+    def test_scoped_tier_requires_named_log_full_source_checkout_and_actual_exit(self):
         self.handoff()
         self.log_pass()
         self.alloc["accepted_base"] = self.base
@@ -82,14 +82,20 @@ class Collector(unittest.TestCase):
         tiers.parent.mkdir()
         row = {"head": self.base[:8], "head_full": self.base, "base": self.base,
                "accepted_base": self.base, "slice": "slice-01", "tier": "t1", "result": "pass",
+               "allocation": self.alloc["id"], "worktree": str(self.wt.resolve()),
                "log": "outputs/slices/slice-01/t1-x.log", "exit_code": 0}
         for mismatch in ({"log": "different.log"}, {"head_full": "a" * 40}, {"base": "a" * 40},
-                         {"accepted_base": "a" * 40}, {"exit_code": 8}, {"exit_code": None}):
+                         {"accepted_base": "a" * 40}, {"allocation": "alloc-other"}, {"allocation": None},
+                         {"worktree": str(self.root.resolve())}, {"worktree": None},
+                         {"exit_code": 8}, {"exit_code": None}):
             with self.subTest(mismatch=mismatch):
                 tiers.write_text(json.dumps({**row, **mismatch}) + "\n")
                 self.assertIn("CANDIDATE-UNVERIFIED", run(self.root))
         tiers.write_text(json.dumps(row) + "\n")
         self.assertIn("DONE", run(self.root))
+        with tiers.open("a") as stream:
+            stream.write(json.dumps({**row, "allocation": "alloc-other"}) + "\n")
+        self.assertIn("CANDIDATE-UNVERIFIED", run(self.root))
 
     def test_queue_marker_is_queued(self):
         self.alloc["execution"]["queue_marker"] = ".run/pg-queue/slice-01"; (self.root / "docs/process/allocations/alloc-slice-01-r1.json").write_text(json.dumps(self.alloc))

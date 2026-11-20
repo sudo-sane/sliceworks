@@ -68,7 +68,7 @@ def run(aid):
             raise ValueError('request must contain only request_id, allocation, slice, head, tier')
         rid = req['request_id']
         if (not isinstance(rid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', rid)
-                or rid in ('active', 'request', 'result')):
+                or rid.lower() in ('active', 'request', 'result')):
             raise ValueError('invalid request_id')
         receipt = run_dir / ('gate-' + rid + '.json')
         saved = None

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0
+
+- **Cumulative preparation.** Pin the accepted base and candidate commit. The project's
+  existing checks receive the full committed delta, including stacked work, additions,
+  removals and renames. Allocations still define write authority.
+- **Execution evidence.** The Codex host gate records the checkout, assigned and accepted
+  bases, verifier invocation, real exit status and artifact hashes. The collector checks
+  the named receipt or scoped tier row against the allocation and reports gate results
+  from disk. Replayed receipts stay distinguishable from new executions.
+- **Behavior checks and bounded repair.** The brief and handoff record early healthy and
+  adverse behavior evidence. After two unsuccessful cycles in one issue family, the
+  next repair strategy predicts an observation and compares it with what actually ran.
+  The Go log wrapper can require a positive count of passing tests and detects empty
+  or mismatched selections even where the test process exits zero.
+- **Adoption.** Stacked and companion allocations supply an explicit accepted base.
+  Project verifiers retain check selection and resource admission. See the
+  [Codex adapter](scripts/runtimes/codex/README.md#host-gate-protocol) for the scoped
+  tier fields and cumulative preparation helper.
+
 ## 0.8.9
 
 - **STOP permits bounded read-only inspection.** The kill-switch hook now uses a bundled, non-executing command classifier for an explicit set of file, search, Git and GitHub reads. Writes, opaque scripts, shell composition and unknown commands still deny. Missing or broken classification fails closed.

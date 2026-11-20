@@ -71,7 +71,7 @@ The host launcher automatically services the request while the writer waits. Sta
    identifies a new run as `delivery: fresh` and a redelivery as `delivery: replayed`.
    A replay makes no new execution or tier row. Send one outstanding request per
    allocation and use a new ID for each new execution, including a changed base.
-   The control names `active`, `request` and `result` are reserved.
+   The control names `active`, `request` and `result` are reserved in any case.
 3. Read the verdict, real verifier exit (null if no process exit was observed), log and
    any error. A pass requires exit 0, a final `RESULT=pass` and matching source before
    and after launch. Commit intended new inputs and keep the checkout clean and stable
@@ -94,6 +94,11 @@ wrapper that forwards to it under the same admission.
 
 The runner holds `<allocation-run>/gate.lock` while a request runs. After an interrupted host process, inspect the active verifier PID/log before clearing a stale lock or `gate-active.json`; never retry a live gate. The broker executes project tests on the host and assumes the configured verifier and assigned slice are trusted development code. It is not a security boundary against malicious test code.
 Use a real project-local run directory for broker artifacts.
+
+For an allocation with an explicit accepted base, a project verifier running outside
+the broker must write a T1 row for the handoff's exact log. Include the allocation ID,
+slice, resolved absolute worktree, full head, both bases, result and actual exit code.
+The collector checks the latest row for that log.
 
 ### Cumulative preparation
 

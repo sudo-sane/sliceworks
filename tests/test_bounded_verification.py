@@ -122,7 +122,7 @@ verification: {{tier: t1, log: {result['log']}, result: pass}}
         self.assertIn("requires a full allocation", result["error"])
 
     def test_request_id_cannot_alias_control_files(self):
-        for rid in ("active", "request", "result"):
+        for rid in ("active", "request", "result", "AcTiVe", "ReQuEsT", "ReSuLt"):
             with self.subTest(request_id=rid):
                 out, result = self.request(rid=rid)
                 self.assertNotEqual(out.returncode, 0)
