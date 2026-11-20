@@ -59,18 +59,74 @@ The CLI exited 1 before executing the sockets: `unknown variant '0', expected 'a
 
 The host launcher automatically services the request while the writer waits. Start the dispatcher outside the worker sandbox. `worker.py` supervises the CLI, captures its thread id, and calls `gate-runner.sh`; the latter refuses a worker role. None of the gate execution needs a model turn. A project with its own dispatcher can invoke `gate-runner.sh <allocation-id>` from its host-side process whenever a request appears, or run it once manually as the coordinator.
 
-1. Run the configured pre-handoff checks first. Commit the slice checkpoint and obtain its full HEAD. Write a temporary JSON file, then rename it atomically to `$SW_CODEX_RUN_DIR/gate-request.json`:
+1. Commit the slice checkpoint and obtain its full HEAD. Run the configured pre-handoff
+   checks on that snapshot. Write the request to a temporary JSON file and rename it
+   atomically to `$SW_CODEX_RUN_DIR/gate-request.json`.
 
    ```json
    {"request_id":"slice-07-attempt-1","allocation":"alloc-slice-07-r1","slice":"slice-07","head":"<full 40-character commit SHA>","tier":"t1"}
    ```
 
-2. Poll `$SW_CODEX_RUN_DIR/gate-result.json` for the same `request_id` and head. Use a unique request id for each new gate; do not reuse a previous id for different source. The runner consumes a request once and returns the same durable receipt for retries of that id. Only one request may be outstanding for an allocation.
-3. Read `result` (`pass`, `fail`, `NOT_RUN`), `exit_code`, `log`, and any `error`. A pass requires exit 0, a last `RESULT=pass` marker, an unchanged HEAD and no tracked source changes. A reused id with different request data is refused. A refusal is never a pass. Per-request log and receipt files remain in the run directory. A pass is evidence for that commit, not permission to merge.
+2. Match `gate-result.json` to the request ID, head and bases. The latest report
+   identifies a new run as `delivery: fresh` and a redelivery as `delivery: replayed`.
+   A replay makes no new execution or tier row. Send one outstanding request per
+   allocation and use a new ID for each new execution, including a changed base.
+   The control names `active`, `request` and `result` are reserved.
+3. Read the verdict, real verifier exit (null if no process exit was observed), log and
+   any error. A pass requires exit 0, a final `RESULT=pass` and matching source before
+   and after launch. Commit intended new inputs and keep the checkout clean and stable
+   for the run. The clean check allows ignored files and the untracked sliceworks
+   markers `.slice`, `.blocked` and `.prehandoff-unavailable.json`. Projects must
+   account for ignored fixtures, external inputs and reproducibility themselves.
+4. For a brokered candidate, put `gate_request: <id>` in its handoff with the checked
+   head, assigned base and gate log. When the worker publishes the handoff in a single
+   subsequent commit, the collector checks that the commit adds or modifies only that
+   handoff and that its contents are committed. Treat the handoff path as metadata and
+   keep acceptance and independent review on the source named in the receipt.
 
-The runner obtains worktree, slice and base from the allocation, checks the repository and HEAD, refuses closed allocations and STOP, allows only implementer T1, and never accepts a command or environment from request data. It runs the **main checkout's** `SW_VERIFY_CMD`, with `--cwd <worktree> --slice <slice> --base <allocation-base> t1`. The project verifier must accept these arguments and **retain its existing verification-slot admission**, including queue fairness and stale-slot recovery. The runner neither creates a competing slot system nor bypasses the verifier's queue. If a project uses different arguments, provide a trusted wrapper as `SW_VERIFY_CMD` that forwards to the existing verifier under that same admission. Do not configure an unrestricted arbitrary-command executor.
+The runner allows T1 for full implementer allocations in the absence of STOP. It checks
+the allocation, repository and HEAD and executes the main checkout's `SW_VERIFY_CMD`
+with `--cwd <worktree> --slice <slice> --base <allocation-base> t1`. Request fields
+identify the allocation, tier and candidate. The configured verifier owns command
+selection and verification-slot admission, including queue fairness and stale-slot
+recovery. If the project verifier takes different arguments, configure a trusted
+wrapper that forwards to it under the same admission.
 
 The runner holds `<allocation-run>/gate.lock` while a request runs. After an interrupted host process, inspect the active verifier PID/log before clearing a stale lock or `gate-active.json`; never retry a live gate. The broker executes project tests on the host and assumes the configured verifier and assigned slice are trusted development code. It is not a security boundary against malicious test code.
+Use a real project-local run directory for broker artifacts.
+
+### Cumulative preparation
+
+The host gate supplies `SW_CUMULATIVE_CHANGES`, an absolute path to the JSON file
+computed from the allocation's accepted base and the sealed head. The assigned base
+still goes to the verifier's existing `--base` argument. Set `accepted_base` on stacked
+and companion allocations before dispatch. It must be the assigned base or an ancestor
+of it. The receipt binds the checkout and both bases, verifier invocation, start and
+finish times, exit, log and coverage hashes. The coverage file describes the available
+delta. The project logs which checks actually ran and any exclusions.
+
+For checks outside the gate, call
+`python3 <plugin>/scripts/verification_source.py --cwd <worktree> --accepted-base <sha> --head <sha>`
+from the trusted project entry point, such as `SW_PREHANDOFF_CMD`. Pin those values via
+the existing allocation and checkpoint. The JSON contains `accepted_base`, `head` and
+`changes`. Entries carry a Git status and `path`, plus `old_path` for renames and copies.
+Git emits a removal and addition when it cannot detect a rename. Consume paths as JSON
+strings and pass them as individual arguments to project tools. Use old and removed
+paths when selecting dependent checks. The project classifies paths and chooses tools.
+Keep logs and generated state out of tracked and unignored source paths.
+
+For a fixed Go test cohort, the trusted project can run
+`run_logged_check.py --log <path> --summary go-json --expect-passed <count> -- go test -json -count=1 …`.
+The receipt distinguishes command exit from observed selection failure and preserves
+skip and failure counts. The count covers top-level passes. Check the intended test
+identities and changed behavior through the existing must-run and acceptance checks.
+
+Older integration allocations can omit `accepted_base` and use the assigned base.
+For stacked work, set it when opening the next allocation. Keep historical receipts
+with their original attribution. Obtain fresh evidence if a historical receipt lacks
+the bindings the collector requires for a current candidate.
+For a project-owned copy of the runtime, update `scripts/verification_source.py` with
+`scripts/collect.py` and `gate_runner.py`.
 
 ## Writable telemetry and pre-handoff checks
 

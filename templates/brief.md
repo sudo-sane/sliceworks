@@ -16,3 +16,8 @@ Goal condition: <the condition the implementer must satisfy before returning CAN
 Dependencies: hard <slices whose merged code this needs>; soft <slices this can start without, with the stub plan>; touches <hot areas, for rebase risk>
 Unblocks (fix, process, release and infrastructure slices only): <the product rows this work unblocks; it blocks nothing else>
 Baseline: <full commit and the gate log of the base, so failures can be classified>
+
+In Verification, link the accepted base and cumulative preparation scope (method chapter 5).
+Name the first connected control, expected healthy and adverse outcomes, test selection,
+and admitted environment. For a shared resource, list its users and the ownership, release,
+and fault-control restoration witnesses. Record the observation or exact `NOT_RUN` reason in the handoff.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +13,13 @@ import time
 
 from automation_errors import (AutomationError, ErrorLoggingArgumentParser,
                                default_error_log, option_value, report_error)
+
+
+def positive_count(value):
+    count = int(value)
+    if count <= 0:
+        raise argparse.ArgumentTypeError("expected a positive count")
+    return count
 
 
 def run(args: argparse.Namespace) -> int:
@@ -35,6 +43,7 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps({"status": "not_run", "error": str(exc), "log": str(log)}))
         return 2
     started = time.monotonic()
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     launch_error = None
     interrupted = False
     with stream:
@@ -44,7 +53,7 @@ def run(args: argparse.Namespace) -> int:
         except Exception as exc:
             launch_error = exc
             stream.write((str(exc) + "\n").encode())
-            raw_exit = 127
+            raw_exit = None
         else:
             try:
                 raw_exit = child.wait()
@@ -56,13 +65,21 @@ def run(args: argparse.Namespace) -> int:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     raw_exit = child.wait()
-    exit_code = 130 if interrupted else (raw_exit if raw_exit >= 0 else 128 - raw_exit)
+    if raw_exit is None:
+        exit_code = 127
+    else:
+        exit_code = 130 if interrupted else (raw_exit if raw_exit >= 0 else 128 - raw_exit)
     size = log.stat().st_size
     result = {"status": "not_run" if launch_error else ("interrupted" if interrupted else
               "passed" if exit_code == 0 else "failed"), "exit_code": exit_code,
               "raw_exit_code": raw_exit, "elapsed_seconds": round(time.monotonic() - started, 3),
-              "log": str(log), "log_bytes": size}
+              "log": str(log), "log_bytes": size, "cwd": str(cwd),
+              "started_at": None if launch_error else started_at,
+              "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     analyzer_failed = False
+    selection_failed = False
+    if args.expect_passed is not None:
+        result["expected_passed_tests"] = args.expect_passed
     if launch_error:
         report_error(launch_error, error_log, context="run_logged_check launch")
     elif exit_code:
@@ -77,6 +94,19 @@ def run(args: argparse.Namespace) -> int:
             result["status"] = "analyzer_failed"
             result["analyzer_error"] = str(exc)
             report_error(exc, error_log, context="run_logged_check analyzer")
+    if args.expect_passed is not None and "observed_checks" in result:
+        observed = result["observed_checks"]
+        counts = observed["counts"]
+        passed = counts["tests"].get("pass", 0)
+        skipped = sum(counts[kind].get("skip", 0) for kind in ("tests", "subtests"))
+        selection_failed = passed != args.expect_passed or skipped > 0 or observed["failure_count"] > 0
+        if selection_failed:
+            error = (f"expected {args.expect_passed} passing tests, observed {passed}, "
+                     f"{skipped} test skips and {observed['failure_count']} failing events")
+            result["selection_error"] = error
+            if exit_code == 0:
+                result["status"] = "selection_failed"
+            report_error(AutomationError(error), error_log, context="run_logged_check selection")
     if exit_code and "observed_checks" not in result:
         try:
             with log.open("rb") as source:
@@ -96,7 +126,7 @@ def run(args: argparse.Namespace) -> int:
         return exit_code if exit_code else 2
     # Preserve a child's nonzero result.  A child success with a bad analyzer is
     # an automation failure and must never be reported as success.
-    return exit_code if exit_code else (2 if analyzer_failed or launch_error else 0)
+    return exit_code if exit_code else (2 if analyzer_failed or selection_failed else 0)
 
 
 def main() -> int:
@@ -109,12 +139,16 @@ def main() -> int:
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--summary", choices=["go-json", "go-text"],
                         help="add bounded observed test counts; full log and exit remain authoritative")
+    parser.add_argument("--expect-passed", type=positive_count, metavar="N",
+                        help="require exactly N passing top-level tests, with no failed events or test skips")
     parser.add_argument("--error-log", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("a command is required after --")
+    if args.expect_passed is not None and args.summary != "go-json":
+        parser.error("--expect-passed requires --summary go-json")
     try:
         return run(args)
     except Exception as exc:

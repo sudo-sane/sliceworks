@@ -18,6 +18,9 @@ Budget: two hours of coordinator time per slice. The coordinator keeps at least 
 **Stage 1, contract.** Coordinator plus contract author, about an hour. Output: the interface hunk with real paths or signatures, data shapes, state transitions, error codes, three to five decisive examples (valid, refusal, failure), golden fixtures, committed to the integration branch.
 
 **Stage 2, brief.** Coordinator, half an hour. At most 150 lines, eight sections plus the material-boundary flag, the goal condition and a Dependencies section (template in `templates/brief.md`). If it does not fit, the slice is too large; split it.
+Use the [preparation and first behavior evidence rules](05-verification.md#preparation-and-first-behavior-evidence)
+when writing Verification. Set the accepted base in the allocation as described in
+[chapter 19](19-allocation-and-completion.md).
 
 **Stage 3, self-planning.** Implementer, first fifteen minutes. Reads the brief, explores, writes its own short plan into `PROGRESS.md`. Nobody writes a task list for someone else.
 

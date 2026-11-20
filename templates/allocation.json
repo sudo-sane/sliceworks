@@ -20,6 +20,7 @@
   "branch": "slice/07",
   "base": "0000000000000000000000000000000000000000",
   "base_kind": "integration",
+  "accepted_base": "0000000000000000000000000000000000000000",
   "baseline": {
     "commit": "0000000000000000000000000000000000000000",
     "gate_log": "outputs/slices/baseline/t1-<ts>.log",

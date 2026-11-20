@@ -8,6 +8,16 @@ Tax: messages per merged slice (8 or fewer); coordinator turns per merged slice 
 
 Quality: review rounds per slice, T2 revert rate, T3 and nightly red rate, escaped defects per increment.
 
+For a comparable accepted outcome, read the same event window from the existing artifacts.
+Use the initial active timestamp and the first connected observation in a handoff or check
+log for time to behavior feedback. Count late gate findings reproducible by an existing
+preparation check, citing the check, the missed input and the reproduction. Use findings and
+repair dispatches to count substantive correction cycles by outcome and issue family, and
+the coordinator recovery log to count actual ownership and next-action transitions. Measure
+through the recorded acceptance for that outcome and identify the event used as the end of
+the window. Use `UNKNOWN` for missing events or unattributable token and cash amounts.
+Shared subscription readings give quota context.
+
 Hourly status, five lines, produced by a script into `STATUS.md`, and the dashboard rebuilt every 30 seconds: both read only files, so the cadence spends no tokens. A status produced by a model turn would cost a full-context request per fire; that was the single largest avoidable spend in the design this method replaced.
 
 ## The dashboard

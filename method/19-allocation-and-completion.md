@@ -26,6 +26,7 @@ Nothing is dispatched without an allocation record, `allocations/<id>.json` unde
 | `mode` | `full`; `prepare-only` for source work on disjoint paths without the gate, beyond the writer cap; `review` for a read-only allocation |
 | `unblocks` | for fix, process, release and infrastructure allocations, the product rows the work unblocks; such an allocation blocks only those rows and nothing else |
 | `worktree`, `branch`, `base` | where it works, on which branch, from which **full 40-character** commit; a stacked or companion base is recorded as such |
+| `accepted_base` | the already accepted full commit used for cumulative preparation (chapter 5); specify it for stacked and companion work, and default to the assigned integration base otherwise |
 | `allowed_paths` | what it may write; the role guard and the diff gate enforce the same list |
 | `completion` | the condition under which the allocation is complete, in one sentence |
 | `required_artifacts` | what must exist for the coordinator to call it complete: the handoff, the tier log, the review file |
@@ -40,7 +41,12 @@ A worker ends every allocation by writing a **handoff**, `handoffs/<allocation-i
 
 ## Collection
 
-The coordinator **collects**, it does not ask. `scripts/collect.py` reads every open allocation and prints one line per allocation from evidence alone: `RUNNING` when a handle or pid is live or a tier log has no `RESULT=` yet; `QUEUED` while the queue marker exists; `DONE` only when the handoff exists, its head equals the branch head, **and** the log it names ends in `RESULT=pass` with a matching row in the tiers file when one exists; `CANDIDATE-UNVERIFIED` when the handoff claims what the evidence does not prove; `BLOCKED` or `HOLD` from the handoff; `STOPPED-NO-HANDOFF` when nothing runs and nothing was written; `STALE-HANDOFF` when the branch moved past the handoff's head. After the allocations it lists `UNREGISTERED` evidence: linked worktrees, live pid files and result-less logs that no open allocation owns, so an empty registry is never read as a clean state; adoption of a running project registers that evidence into allocations first. A handoff, a dashboard label or a collector line never establishes completion without the underlying execution evidence. The resume routine runs the collector first and after every wake. Chat inspection, where a runtime offers it, is read-only and secondary.
+The coordinator collects completion from evidence. The [collect skill](../skills/collect/SKILL.md)
+maps the collector's states to the next action. Adopt a running project by registering
+unowned worktrees and live evidence into allocations first. Run the collector at resume
+and after each wake. Any runtime chat inspection is read-only and secondary. Record
+fine-grained progress in the result or handoff and finish the allocation with `collected`
+or `closed`.
 
 Rules that follow:
 
@@ -59,6 +65,12 @@ A result certifies exactly one source identity: the full commit it ran on, in th
 - A stacked or companion worktree is checked against its **assigned** base and ancestry; a generic check against the moving integration head rejects valid preparation work. Nothing is rebased or renamed to satisfy a base the allocation did not name.
 - A worktree is created only from a committed snapshot that passes its own preflight (for a project with numbered migrations: matching pairs, unique versions); a clean checkpoint whose deletions live only in another working tree is not a valid base.
 - A result from a different base, checkout or commit never certifies the current candidate.
+- Keep fresh executions and reused evidence distinct. Reuse cites the original result,
+  source and scope, the independent applicability decision, and fresh checks of the
+  affected boundary. A handoff-only publication can point to the verified source if its
+  delta contains only the allocation's committed handoff and the project treats that file
+  as metadata. The [Codex adapter](../scripts/runtimes/codex/README.md#host-gate-protocol)
+  describes how the collector checks this case.
 
 ## What a result proves
 
@@ -86,7 +98,14 @@ Infrastructure, process and fix work is allocated with `unblocks`: the product r
 
 ## Bounded repair
 
-A failing round names the concrete obstruction, preserves the failed result and its log, and issues **one** bounded correction to the same worker where possible. Unchanged audits, documentation-only rounds and confidence reruns need a stated reason. Two substantive rounds in one family stop the slice for diagnosis (chapter 6). The retrospective measures accepted outcomes next to review rounds, repeated checks, coordination turns and time spent waiting, so that artifacts are never mistaken for progress.
+A failing round names the obstruction, preserves its result and log, and issues one
+bounded correction to the same worker where possible. After two unsuccessful substantive
+cycles on the same outcome and issue family, retain the count across allocation, task and
+model changes. In the existing findings or recovery record, record the diagnosis, changed
+strategy and the new observable result it predicts before the next attempt. Compare the
+next observed result with that prediction and keep the comparison in the record. Correct
+ordinary process, test harness and oracle failures under coordinator authority while other
+ready work proceeds. Use the existing escalation path for decisions outside that authority.
 
 ## Where this leaves chapter 7
 

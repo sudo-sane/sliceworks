@@ -17,3 +17,6 @@ Updated: <timestamp>
 
 ## Next actions
 1.
+
+For repeated repair, link the findings or recovery entry from chapter 19 with the
+outcome, issue family, failed-cycle count, predicted evidence and next observed result.

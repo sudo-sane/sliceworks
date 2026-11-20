@@ -136,6 +136,11 @@
       ],
       "default": "integration"
     },
+    "accepted_base": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Already accepted integration commit from which to compute cumulative verification scope. Required by the host gate for stacked and companion allocations. For integration allocations the assigned base is the default."
+    },
     "allowed_paths": {
       "type": "array",
       "items": {

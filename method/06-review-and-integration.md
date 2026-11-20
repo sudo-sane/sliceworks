@@ -2,7 +2,11 @@
 
 ## Review
 
-Inputs: base SHA, head SHA, the brief, the T1 log. The reviewer works from the diff in a fresh context and reads surrounding code only to verify a finding.
+Provide the accepted base, candidate SHA, brief, cumulative preparation and T1 evidence,
+and early healthy and adverse observations or their `NOT_RUN` reasons. The reviewer works
+from the diff in a fresh context and reads surrounding code only to verify a finding.
+For repair rounds, include the exact delta, stable finding IDs and a compact pointer
+to earlier evidence. Review the full affected boundary again when a material assumption changes.
 
 Output, one message:
 
@@ -15,7 +19,9 @@ Scope: reviewed <n> files; reused T1 evidence for <units>; not reviewed: <explic
 
 Severity by product impact: High blocks the merge; Medium blocks unless the implementer states why it is out of scope; Low is advisory. Style, naming and abstraction preferences are not findings. The implementer decides which findings are in scope and says so in the next `CANDIDATE`.
 
-Rounds: the same reviewer is resumed for the delta. A failing round names the concrete obstruction, preserves the failed result and issues one bounded correction to the same implementer (chapter 19). After two substantive rounds in one issue family, the coordinator diagnoses the requirement or the oracle before any further repair. A review pass approves source; it is not a prepared checkpoint and not runtime proof.
+Resume the same independent reviewer for the delta. Use chapter 19's bounded repair
+procedure for failed rounds and its execution identity rules for reused evidence.
+A review pass approves the proposed source.
 
 Named-risk review: triggered by the brief's material-boundary flag. One named question, separate verdict, the strongest model. Both verdicts must pass.
 

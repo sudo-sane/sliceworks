@@ -73,6 +73,16 @@
       "pattern": "^[0-9a-f]{40}$",
       "description": "the assigned base, when the run compares against one"
     },
+    "accepted_base": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "the accepted base that defines the cumulative change set"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "start of this process, including any wait inside its verifier; at records completion"
+    },
     "command": {
       "type": "string",
       "description": "the exact command line that ran"

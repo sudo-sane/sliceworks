@@ -9,6 +9,7 @@ Slices merged, ledger rows passing, exit (T2 green at <sha>, demo result), cost 
 
 ## What review caught
 ## What slowed delivery
+<cycle measurements and evidence references from method chapter 9; label missing counters UNKNOWN>
 ## Process changes made in the window
 Adopted proposals (id, title, metric, sunset); components removed; last retrospective's changes verified or sunset.
 ## Carried forward

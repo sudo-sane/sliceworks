@@ -19,7 +19,7 @@ class AnalysisError(AutomationError):
     """The log is not a complete supported protocol stream."""
 
 
-SUPPORTED_ACTIONS = {"start", "run", "output", "pass", "fail", "skip"}
+SUPPORTED_ACTIONS = {"start", "run", "pause", "cont", "output", "pass", "fail", "skip"}
 
 
 def summarize(log: Path | str, format_name: str, exit_code: int | None) -> dict:
@@ -77,7 +77,9 @@ def summarize(log: Path | str, format_name: str, exit_code: int | None) -> dict:
                     raise AnalysisError("unsupported Go JSON output at log line " + str(lines))
                 if key in active:
                     contexts.setdefault(key, deque(maxlen=3)).append(output[:200].rstrip())
-            else:
+            elif action in {"pass", "fail", "skip"}:
+                if test and key not in active:
+                    raise AnalysisError("Go JSON test ended without a start at log line " + str(lines))
                 kind = "subtests" if "/" in test else "tests" if test else "packages"
                 before = len(failures)
                 terminal(kind, action, package + (":" + test if test else ""))

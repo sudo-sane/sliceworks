@@ -5,7 +5,7 @@
 #   ALLOC <id> <STATE> <detail>
 # States: RUNNING (a recorded pid is alive, or the latest tier log has no RESULT= yet), QUEUED (the queue marker exists:
 # a legitimate wait for a shared resource), DONE (handoff present, its head equals the branch head, and the verification
-# it names is proven by the log's last RESULT=pass and, when metrics/tiers.jsonl exists, a row for that head), BLOCKED or
+# it names matches the gate receipt or tier evidence), BLOCKED or
 # HOLD (from the handoff), STALE-HANDOFF (branch moved past the handoff head), CANDIDATE-UNVERIFIED (handoff claims a
 # candidate but the evidence does not prove it), STOPPED-NO-HANDOFF (nothing runs and nothing was written),
 # MISSING-WORKTREE. After the allocations it prints UNREGISTERED lines for worktrees, pid files and result-less logs
@@ -15,6 +15,7 @@ import argparse, json, os, pathlib, re, subprocess, sys
 import fcntl
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from safe_git import git_command
+from verification_source import FULL_SHA, accepted_base, gate_artifacts_match, last_result
 
 
 def git(cwd, *args):
@@ -37,9 +38,9 @@ def pid_alive(path):
 
 
 def parse_handoff(text):
-    if not text.startswith("---"):
+    if not text.startswith("---\n") or "\n---\n" not in text:
         return {}
-    fm = text.split("---", 2)[1]
+    fm = text.split("\n---\n", 1)[0]
     out = {}
     for line in fm.splitlines():
         m = re.match(r"^(\w+):\s*(.*)$", line.strip())
@@ -48,7 +49,7 @@ def parse_handoff(text):
     v = out.get("verification", "")
     m = re.search(r"result:\s*(pass|fail|NOT_RUN)", v)
     out["verification_result"] = m.group(1) if m else None
-    m = re.search(r"log:\s*([^,}]+)", v)
+    m = re.search(r"log:\s*(.+?)(?:,\s*\w+:|}$|$)", v)
     out["verification_log"] = m.group(1).strip() if m else None
     return out
 
@@ -67,28 +68,85 @@ def latest_log_result(root, log_dir):
     return str(logs[-1].relative_to(root)), (m[-1] if m else None)
 
 
-def verification_proven(root, state_dir, h, head):
-    """A handoff's claim is proven only by the log it names (last RESULT=pass) and, when the tiers file exists, a row for that head."""
+def verification_proven(root, state_dir, h, alloc, wt, run_dir):
+    """Match the handoff to the specific execution, with legacy tier-log support."""
+    head = h.get("head")
+    if not head or not FULL_SHA.fullmatch(head) or h.get("base") != alloc["base"]:
+        return False, "handoff must name the checked full head and assigned base"
     if h.get("verification_result") != "pass":
         return False, f"handoff verification {h.get('verification_result') or 'missing'}"
     log = h.get("verification_log")
     if not log:
         return False, "handoff names no log"
-    lp = pathlib.Path(log); lp = lp if lp.is_absolute() else root / lp
-    if not lp.exists():
+    lp = (root / log).absolute()
+    if not lp.is_file():
         return False, f"log {log} not found"
-    results = re.findall(r"^RESULT=(\w+)", lp.read_text(errors="ignore"), re.M)
-    if not results or results[-1] != "pass":
-        return False, f"log {log} ends with RESULT={results[-1] if results else 'none'}"
+    marker = last_result(lp)
+    if marker != "pass":
+        return False, f"log {log} ends with RESULT={marker or 'none'}"
+
+    artifacts = root / run_dir / "codex" / alloc["id"]
+    request_id = h.get("gate_request")
+    # Recognize broker logs even if a handoff omits the new request field.
+    if lp.resolve().parent == artifacts.resolve():
+        match = re.fullmatch(r"gate-([A-Za-z0-9_-]{1,80})\.log", lp.name)
+        if match:
+            request_id = request_id or match[1]
+    if request_id is not None:
+        expected = {"request_id": request_id, "head": head, "base": alloc["base"],
+                    "allocation": alloc["id"], "slice": alloc["slice"], "worktree": str(wt.resolve()),
+                    "tier": "t1", "result": "pass", "exit_code": 0, "delivery": "fresh", "log": str(lp)}
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", request_id):
+            return False, "invalid gate request id"
+        try:
+            path = artifacts / f"gate-{request_id}.json"
+            if path.is_symlink() or artifacts.resolve() != artifacts:
+                raise ValueError("symlink gate artifacts")
+            receipt = json.loads(path.read_text())
+            expected["accepted_base"] = accepted_base(alloc)
+            if (not isinstance(receipt, dict)
+                    or type(receipt.get("exit_code")) is not int
+                    or any(receipt.get(key) != value for key, value in expected.items())
+                    or not gate_artifacts_match(receipt, artifacts, request_id)):
+                raise ValueError("receipt identity, outcome or artifact digest differs")
+        except (OSError, ValueError) as exc:
+            return False, f"gate receipt {request_id}: {exc}"
+        return True, f"{log} RESULT=pass (gate receipt {request_id})"
+
     tiers = root / state_dir / "metrics" / "tiers.jsonl"
-    if tiers.exists() and head:
-        rows = [json.loads(l) for l in tiers.read_text().splitlines() if l.strip()]
-        match = [r for r in rows if head.startswith(str(r.get("head", "")) or "\0") or r.get("head_full") == head]
-        if not match:
-            return False, f"no tiers row for head {head[:8]}"
-        if not any(r.get("result") == "pass" for r in match):
-            return False, f"tiers rows for {head[:8]} are not pass"
-    return True, f"{log} RESULT=pass"
+    scoped = "accepted_base" in alloc
+    if tiers.exists():
+        try:
+            rows = [json.loads(line) for line in tiers.read_text().splitlines() if line.strip()]
+            if any(not isinstance(row, dict) for row in rows):
+                raise ValueError("expected JSON objects")
+        except (OSError, ValueError) as exc:
+            return False, f"cannot read tiers evidence: {exc}"
+        matching = []
+        for row in rows:
+            row_log = row.get("log")
+            same_log = isinstance(row_log, str) and (root / row_log).resolve() == lp.resolve()
+            row_head = row.get("head_full", row.get("head"))
+            if same_log or row_head in (head, head[:8]):
+                matching.append((row, same_log))
+        if scoped:
+            valid = [row for row, same_log in matching if same_log and row.get("head_full") == head
+                     and row.get("base") == alloc["base"] and row.get("slice") == alloc["slice"]
+                     and row.get("tier") == "t1" and row.get("accepted_base") == alloc["accepted_base"]]
+            if (not valid or valid[-1].get("result") != "pass"
+                    or type(valid[-1].get("exit_code")) is not int or valid[-1]["exit_code"] != 0):
+                return False, "no matching passing execution row for the named log, source and base"
+            return True, f"{log} RESULT=pass (matching tier row)"
+        named = any(same_log for _, same_log in matching)
+        legacy = [row for row, same_log in matching if (same_log if named else not row.get("log"))
+                  and row.get("head_full", row.get("head")) in (head, head[:8])
+                  and row.get("base", alloc["base"]) == alloc["base"]
+                  and row.get("slice", alloc["slice"]) == alloc["slice"] and row.get("tier") == "t1"]
+        if not legacy or legacy[-1].get("result") != "pass" or legacy[-1].get("exit_code", 0) != 0:
+            return False, f"no passing legacy T1 row for head {head[:8]}"
+    elif scoped:
+        return False, "no tier execution rows for the scoped allocation"
+    return True, f"{log} RESULT=pass (legacy evidence)"
 
 
 def unregistered(root, state_dir, allocs, worktree_root, outputs_dir):
@@ -134,7 +192,7 @@ def unregistered(root, state_dir, allocs, worktree_root, outputs_dir):
     return out
 
 
-def assess(root, state_dir, alloc):
+def assess(root, state_dir, alloc, run_dir=".run"):
     wt = pathlib.Path(alloc["worktree"])
     wt = wt if wt.is_absolute() else root / wt
     if not wt.exists():
@@ -156,18 +214,50 @@ def assess(root, state_dir, alloc):
         handoff_path = root / handoff_rel
     if not handoff_path.exists():
         return "STOPPED-NO-HANDOFF", f"no process, no {handoff_rel}; branch head {head[:8] if head else '?'}"
-    h = parse_handoff(handoff_path.read_text(errors="ignore"))
+    handoff_text = handoff_path.read_text(errors="ignore")
+    h = parse_handoff(handoff_text)
+    if h.get("gate_request") and handoff_path == wt / handoff_rel:
+        if not head or git(wt, "show", head + ":" + handoff_rel) != handoff_text.strip():
+            return "CANDIDATE-UNVERIFIED", "brokered handoff is missing at the checkout head or changed on disk"
     if h.get("head") and head and h["head"] != head:
-        return "STALE-HANDOFF", f"handoff head {h['head'][:8]} but branch head {head[:8]}"
+        # Allow a final commit that publishes only this allocation's handoff.
+        # Read it at that commit so uncommitted edits cannot change the claim.
+        publishes_handoff = (h.get("gate_request") and handoff_path == wt / handoff_rel
+                             and git(wt, "rev-parse", "HEAD^") == h["head"]
+                             and git(wt, "diff", "--name-only", "-z", "--no-renames",
+                                     h["head"], head, "--") == handoff_rel + "\0")
+        if not publishes_handoff:
+            return "STALE-HANDOFF", f"handoff head {h['head'][:8]} but branch head {head[:8]}"
     res = (h.get("result") or "").upper()
     if res in ("BLOCKED", "HOLD"):
         return res, f"handoff {handoff_rel}: {h.get('verification_result') or 'no verification'}"
     if res == "CANDIDATE":
-        ok, why = verification_proven(root, state_dir, h, head)
+        if not head or h.get("allocation") != alloc["id"]:
+            return "CANDIDATE-UNVERIFIED", "missing checkout head or mismatched handoff allocation"
+        ok, why = verification_proven(root, state_dir, h, alloc, wt, run_dir)
         if ok:
             return "DONE", f"candidate at {head[:8]}, {why}"
         return "CANDIDATE-UNVERIFIED", f"candidate at {head[:8]}: {why}"
     return "STOPPED-NO-HANDOFF", f"handoff present but result unreadable: {res or 'none'}"
+
+
+def reported_gate(root, run_dir, allocation_id):
+    """Expose the runner's latest report even before a handoff is available."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", allocation_id):
+        return None
+    path = root / run_dir / "codex" / allocation_id / "gate-result.json"
+    if not path.exists():
+        return None
+    try:
+        if path.resolve() != path:
+            raise ValueError("symlink gate report")
+        result = json.loads(path.read_text())
+        if not isinstance(result, dict) or result.get("result") not in ("pass", "fail", "NOT_RUN"):
+            raise ValueError("invalid gate report")
+        return {key: result.get(key) for key in ("request_id", "head", "base", "accepted_base",
+                "result", "exit_code", "delivery", "log", "error")}
+    except (OSError, ValueError) as exc:
+        return {"result": "UNREADABLE", "error": str(exc)}
 
 
 def merge_worker_metrics(root, state_dir, run_dir):
@@ -238,10 +328,13 @@ def main(argv=None):
         if alloc.get("state") in ("closed", "collected"):
             continue
         open_allocs.append(alloc)
-        state, detail = assess(root, state_dir, alloc)
+        state, detail = assess(root, state_dir, alloc, run_dir)
         w = alloc.get("worker") or {}; ex = alloc.get("execution") or {}
         rows.append({"id": alloc["id"], "slice": alloc.get("slice"), "role": alloc.get("role"), "state": state, "detail": detail,
                      "chat": w.get("chat_id"), "session": ex.get("session_id") or w.get("id")})
+        gate = reported_gate(root, run_dir, alloc["id"])
+        if gate:
+            rows[-1]["gate"] = gate
     extra = unregistered(root, state_dir, open_allocs, worktree_root, outputs_dir)
     if a.json:
         print(json.dumps({"allocations": rows, "unregistered": [{"kind": k, "path": p, "detail": x} for k, p, x in extra]}, indent=2))
@@ -249,6 +342,9 @@ def main(argv=None):
         for r in rows:
             ids = " ".join(f"{k}={v}" for k, v in (("chat", r.get("chat")), ("session", r.get("session"))) if v)
             print(f"ALLOC {r['id']} {r['state']} {r['detail']}{(' [' + ids + ']') if ids else ''}")
+            if gate := r.get("gate"):
+                print(f"GATE {r['id']} {gate.get('request_id') or '-'} {gate['result']} "
+                      f"{gate.get('head') or '-'} {gate.get('log') or gate.get('error') or '-'}")
         if not rows:
             print("ALLOC none open")
         for k, p, x in extra:

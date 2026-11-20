@@ -12,6 +12,28 @@
 
 The tier *structure* is the method's; the *commands* behind each tier are the project's, declared in its configuration. Affected units are computed, never classified by hand: a project supplies a "changed paths to test targets" function (reverse-dependency closure for T2 and T3, direct importers for T1).
 
+## Preparation and first behavior evidence
+
+Pin the accepted integration base and the committed candidate. Select the project's cheap
+preparation checks from the entire delta between those identities. Include earlier unaccepted
+stacked work, additions, deletions and both sides of renames. The allocation's write scope
+still governs authority to edit. Refresh preparation when either pin changes. Record the
+selected checks, baseline, scope and exclusions with the logs. The normal whole-project
+gates still apply. The [cumulative preparation helper](../scripts/runtimes/codex/README.md#cumulative-preparation)
+provides the same path data to project checks inside and outside the Codex broker.
+
+In the brief, name the earliest admitted control that exercises the changed boundary with
+the real dependency or integration where required. Run the relevant healthy and adverse
+cases and record the observations or the exact unmet execution precondition. For shared
+resources, cover all acquisition and check users, ownership or transfer, release and
+actual process exit. If a fault-injection control can itself fail, exercise that failure
+and verify restoration and exit after it.
+
+The project owns check selection. Record intended and observed test cases or counts as
+appropriate and keep failures, skips and `NOT_RUN` visible. Keep resource-bound work in
+the existing admission queue. Overlap checks only when they are independent, use the same
+pinned source and have disjoint outputs and fixtures.
+
 ## Rules
 
 - A check must actually run. A renamed or unwritten test never counts; the must-run check fails unless the named test ran and passed.
