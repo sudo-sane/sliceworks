@@ -142,18 +142,18 @@ worktree. It records the exact command and hashes of the current project configu
 verifier in `inputs.config_sha256` and `inputs.verifier_sha256`. An existing standalone
 `SW_PREHANDOFF_CMD` must be moved into the complete verifier before opting in.
 
-Both worker runtimes use the same host runner for candidate admission. Codex's
-supervisor services the request. For a Claude writer, the coordinator arranges for the
-host runner to service the existing gate request while the source is sealed and before
-the writer commits the handoff. Use the request fields above under
-`<run>/codex/<allocation>` and the same protected `gate-runner.sh <allocation>`
-invocation. Enable the cadence only when that host service is available. The worker
-publishes the handoff after it observes the receipt.
+Candidate cadence applies to full Codex allocations with `worker.runtime: codex`
+run by the isolated `dispatch.sh` process. Its supervisor services the existing gate
+request while the source is sealed. The worker publishes the handoff after observing
+the receipt. The writer's configured grants exclude the host receipt directory.
+Native Claude uses turn cadence. A runtime without verified separate host custody must
+use turn cadence for its writers.
 
-The runner keeps the latest actual result for the exact candidate and verification
-policy in host-owned Git metadata. The collector matches the named receipt to that
-record before admitting review. An older pass cannot replace a later failure or
-unavailable check. Replaying a receipt does not create a new attempt. Imported tier
+After validating a fresh request's allocation, checkout and source, the runner
+records the attempt in host-owned Git metadata before resolving the verifier. The
+collector matches the named receipt to that latest attempt and to the current
+verification policy. A failed or unavailable check supersedes an earlier pass even
+after the source and verifier are usable again. Replaying a receipt does not create a new attempt. Imported tier
 rows remain telemetry. A committed handoff-only child carries the exact reviewed SHA.
 Keep the writer allocation open until review and any `FINDINGS` repair are complete.
 

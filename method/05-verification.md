@@ -15,8 +15,10 @@ The tier *structure* is the method's; the *commands* behind each tier are the pr
 ## Candidate cadence
 
 The default `SW_VERIFY_CADENCE=turn` keeps the T0 Stop hook and T1 candidate gate. A project
-can explicitly set the literal `SW_VERIFY_CADENCE=candidate` in its configuration to complete one observable slice before
-one coordinated verification and review cycle. Keep ordinary edits in the same allocation.
+can explicitly set `SW_VERIFY_CADENCE=candidate` for full allocations run through the
+isolated Codex launcher. Complete one observable slice before one coordinated
+verification and review cycle. Native Claude writers retain turn cadence.
+Keep ordinary edits in the same allocation.
 Use an earlier checkpoint when a named unresolved question needs a narrower control.
 
 Before opting in, configure the trusted project T1 verifier to run the entire candidate check
@@ -33,7 +35,7 @@ The collector admits review from a committed handoff and the latest actual host 
 receipt for that source and policy. A handoff-only child commit carries the evidence
 pointer; the source in the evidence is the reviewed revision. The
 [runtime adapter](../scripts/runtimes/codex/README.md#completed-candidate-cadence) describes
-how either worker runtime uses the existing host runner.
+how the isolated Codex launcher uses the existing host runner.
 
 ## Preparation and first behavior evidence
 

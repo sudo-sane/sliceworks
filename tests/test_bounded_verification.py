@@ -27,7 +27,8 @@ class BoundedVerification(runtime.Project):
 
     def set_allocation(self, **changes):
         self.alloc(AID, {"role": "slice-implementer", "worktree": str(self.wt),
-                         "branch": "slice/07", "base": self.base, "state": "open", **changes})
+                         "branch": "slice/07", "base": self.base, "state": "open",
+                         "worker": {"kind": "cli", "runtime": "codex"}, **changes})
 
     def verifier(self, body):
         self.verify.write_text("#!/bin/sh\nset -eu\n" + body + "\n")
@@ -256,23 +257,21 @@ exit 17
         self.opt_in()
         (self.wt / "source").write_text("first checkpoint")
         self.commit()
-        for adapter in ("codex", "claude"):
-            self.assertIsNone(self.stop(adapter))
-            self.assertEqual(self.collect()[0]["state"], "STOPPED-NO-HANDOFF")
-            self.assertFalse(self.counter.exists())
+        self.assertIsNone(self.stop("codex"))
+        self.assertEqual(self.collect()[0]["state"], "STOPPED-NO-HANDOFF")
+        self.assertFalse(self.counter.exists())
         (self.wt / "source").write_text("completed outcome")
         head = self.commit()
         out, result = self.request(head)
         self.assertEqual(out.returncode, 0, result)
         self.handoff(result, commit=False)
         self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
-        self.assertEqual(self.stop("claude"), "block")
+        self.assertEqual(self.stop("codex"), "block")
         self.commit()
-        for adapter in ("claude", "codex"):
-            self.assertIsNone(self.stop(adapter))
-            complete = self.collect()[0]
-            self.assertEqual(complete["state"], "DONE")
-            self.assertIn(head, complete["detail"])
+        self.assertIsNone(self.stop("codex"))
+        complete = self.collect()[0]
+        self.assertEqual(complete["state"], "DONE")
+        self.assertIn(head, complete["detail"])
         self.assertEqual(self.counter.read_text().splitlines(), ["run"])
         (self.wt / "source").write_text("repair in progress")
         self.assertEqual(self.collect()[0]["state"], "STALE-HANDOFF")
@@ -325,9 +324,7 @@ exit 17
         self.opt_in()
         self.verify.chmod(0o644)
         (self.wt / ".blocked").write_text("HOLD wait\n")
-        for adapter in ("codex", "claude"):
-            with self.subTest(adapter=adapter):
-                self.assertEqual(self.stop(adapter), "block")
+        self.assertEqual(self.stop("codex"), "block")
         command = "scripts/dev/verify-slice.sh t0"
         (self.wt / ".blocked").write_text(f"HOLD unavailable: {command}\n")
         log = self.wt / ".unavailable-log"
@@ -335,9 +332,7 @@ exit 17
         (self.wt / ".prehandoff-unavailable.json").write_text(
             json.dumps({"command": command, "log": log.name})
         )
-        for adapter in ("codex", "claude"):
-            with self.subTest(adapter=adapter):
-                self.assertIsNone(self.stop(adapter))
+        self.assertIsNone(self.stop("codex"))
 
     def test_opt_in_required_verifier_failure_blocks_review_despite_pass_marker(self):
         self.opt_in()
@@ -356,8 +351,7 @@ exit 17
         staged.parent.mkdir(parents=True)
         self.tiers.replace(staged)
         self.handoff(result)
-        for adapter in ("codex", "claude"):
-            self.assertEqual(self.stop(adapter), "block")
+        self.assertEqual(self.stop("codex"), "block")
         self.assertEqual(self.collect(merge=True)[0]["state"], "CANDIDATE-UNVERIFIED")
         self.assertTrue(self.tiers.exists())
 
@@ -379,6 +373,22 @@ exit 17
         self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
         self.assertEqual(self.stop("codex"), "block")
 
+    def test_opt_in_valid_request_with_unavailable_verifier_replaces_earlier_success(self):
+        self.opt_in()
+        out, earlier = self.request(rid="earlier")
+        self.assertEqual(out.returncode, 0, earlier)
+        self.verify.chmod(0o644)
+        out, unavailable = self.request(rid="unavailable")
+        self.assertNotEqual(out.returncode, 0, unavailable)
+        self.assertEqual(unavailable["result"], "NOT_RUN")
+        self.verify.chmod(0o755)
+        out, replay = self.request(rid="earlier")
+        self.assertNotEqual(out.returncode, 0, replay)
+        self.assertEqual(replay["result"], "NOT_RUN")
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+        self.handoff(earlier)
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+
     def test_opt_in_open_writer_can_publish_a_review_repair(self):
         self.opt_in()
         out, previous = self.request(rid="initial")
@@ -393,6 +403,19 @@ exit 17
         self.handoff(current)
         self.assertEqual(self.collect()[0]["state"], "DONE")
 
+    def test_opt_in_keeps_native_claude_on_turn_checks(self):
+        self.opt_in()
+        self.set_allocation(worker={"kind": "subagent", "runtime": "claude"})
+        self.assertIsNone(self.stop("claude"))
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+        observed = self.collect()[0]
+        self.assertNotIn("cadence", observed)
+        self.assertEqual(observed["state"], "STOPPED-NO-HANDOFF")
+        out, result = self.request(rid="legacy")
+        self.assertEqual(out.returncode, 0, result)
+        self.assertNotIn("inputs", result)
+        self.assertFalse((self.root / ".git/sliceworks-candidate-gates").exists())
+
     def test_opt_in_ambiguous_identity_keeps_legacy_check_and_hold(self):
         self.opt_in()
         out, result = self.request()
@@ -400,7 +423,8 @@ exit 17
         self.handoff(result)
         other = "alloc-slice-07-r2"
         self.alloc(other, {"role": "slice-implementer", "worktree": str(self.wt),
-                           "branch": "slice/07", "state": "open"})
+                           "branch": "slice/07", "state": "open",
+                           "worker": {"kind": "cli", "runtime": "codex"}})
         for adapter in ("codex", "claude"):
             self.assertIsNone(self.stop(adapter))
         self.assertEqual(self.counter.read_text().splitlines(), ["run"] * 3)

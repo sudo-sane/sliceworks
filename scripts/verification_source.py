@@ -99,9 +99,17 @@ def candidate_policy(root):
     }
 
 
+def uses_candidate_cadence(allocation, config):
+    worker = allocation.get("worker") or {}
+    return (config.get("SW_VERIFY_CADENCE") == "candidate"
+            and isinstance(worker, dict) and worker.get("runtime") == "codex"
+            and allocation.get("role", "").split(":")[-1] == "slice-implementer"
+            and allocation.get("mode", "full") == "full")
+
+
 def candidate_gate_record(root, expected):
-    """Latest host attempt for an exact candidate and verification policy."""
-    fields = ("head", "base", "accepted_base", "allocation", "slice", "worktree", "tier", "inputs", "command")
+    """Latest host attempt for an exact candidate, including setup refusals."""
+    fields = ("head", "base", "accepted_base", "allocation", "slice", "worktree", "tier")
     identity = {field: expected[field] for field in fields}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     common = root / ".git"

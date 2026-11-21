@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from safe_git import git_command
 from verification_source import (accepted_base, candidate_command, candidate_gate_record, candidate_policy,
                                  coverage_path, cumulative_changes, file_digest, gate_artifacts_match,
-                                 last_result, require_ancestor, require_sealed_checkout)
+                                 last_result, require_ancestor, require_sealed_checkout, uses_candidate_cadence)
 
 
 def atomic_json(path, value):
@@ -107,14 +107,10 @@ def run(aid):
         require_sealed_checkout(wt, req['head'])
         if (root / os.environ['SW_STOP_FILE']).exists():
             raise ValueError('STOP kill switch present')
-        policy = candidate_policy(root)
-        if policy:
-            if os.environ['SW_VERIFY_CADENCE'] != 'candidate' or not alloc.get('branch'):
-                raise ValueError('candidate cadence requires matching launcher configuration and allocation branch')
-            if os.environ['SW_PREHANDOFF_CMD'] != f"{os.environ['SW_VERIFY_CMD']} {os.environ['SW_T0_ARGS']}":
-                raise ValueError('candidate cadence requires the complete configured T1 verifier')
-            command = candidate_command(policy[0], wt, alloc)
-            result.update(inputs=policy[1], command=command)
+        policy = None
+        if uses_candidate_cadence(alloc, os.environ):
+            if not alloc.get('branch'):
+                raise ValueError('candidate cadence requires the allocated branch')
             host_record = candidate_gate_record(root, result)
             if saved is None:
                 host_record.parent.mkdir(parents=True, exist_ok=True)
@@ -122,8 +118,15 @@ def run(aid):
                 authoritative = host_record
             elif json.loads(host_record.read_text()) != saved:
                 raise ValueError('saved gate is no longer the latest actual host gate for this candidate')
-        elif os.environ['SW_VERIFY_CADENCE'] == 'candidate':
-            raise ValueError('candidate cadence differs between the prepared launcher and project policy')
+            policy = candidate_policy(root)
+            if not policy:
+                raise ValueError('candidate cadence differs between the prepared launcher and project policy')
+            if os.environ['SW_PREHANDOFF_CMD'] != f"{os.environ['SW_VERIFY_CMD']} {os.environ['SW_T0_ARGS']}":
+                raise ValueError('candidate cadence requires the complete configured T1 verifier')
+            command = candidate_command(policy[0], wt, alloc)
+            result.update(inputs=policy[1], command=command)
+            if saved is not None and (saved.get('inputs') != policy[1] or saved.get('command') != command):
+                raise ValueError('saved gate used a different candidate verification policy')
         if saved is not None:
             if not gate_artifacts_match(saved, run_dir, rid):
                 raise ValueError('saved gate artifacts are incomplete or changed; use a new request_id')

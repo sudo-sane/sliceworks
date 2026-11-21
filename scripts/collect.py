@@ -18,7 +18,7 @@ from safe_git import git_command
 from survey import read_config
 from verification_source import (FULL_SHA, accepted_base, candidate_command, candidate_gate_record,
                                  candidate_policy, gate_artifacts_match, last_result, require_ancestor,
-                                 require_sealed_checkout)
+                                 require_sealed_checkout, uses_candidate_cadence)
 
 
 def git(cwd, *args):
@@ -259,12 +259,6 @@ def candidate_handoff(root, state_dir, alloc, wt, run_dir):
     return ("DONE" if proven else "CANDIDATE-UNVERIFIED"), f"candidate at {source}, {why}"
 
 
-def uses_candidate_cadence(alloc, cfg):
-    return (cfg.get("SW_VERIFY_CADENCE") == "candidate"
-            and alloc.get("role", "").split(":")[-1] == "slice-implementer"
-            and alloc.get("mode", "full") == "full")
-
-
 def candidate_allocations(root, state_dir, wt, cfg):
     for path in (root / state_dir / "allocations").glob("*.json"):
         alloc = json.loads(path.read_text())
@@ -286,7 +280,7 @@ def candidate_stop(root, state_dir, wt, run_dir, allocation_id):
         matches = list(candidate_allocations(root, state_dir, wt, cfg))
         if len(matches) != 1:
             return "LEGACY"
-        if matches[0].get("state") != "open" or (allocation_id and matches[0]["id"] != allocation_id):
+        if matches[0].get("state") != "open" or matches[0]["id"] != allocation_id:
             return "LEGACY"
         state, _ = candidate_handoff(root, state_dir, matches[0], wt, run_dir)
         if state in ("STOPPED-NO-HANDOFF", "STALE-HANDOFF"):
