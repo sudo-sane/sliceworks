@@ -262,7 +262,8 @@ exit 17
             self.assertFalse(self.counter.exists())
         (self.wt / "source").write_text("completed outcome")
         head = self.commit()
-        result = self.direct_gate(head)
+        out, result = self.request(head)
+        self.assertEqual(out.returncode, 0, result)
         self.handoff(result, commit=False)
         self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
         self.assertEqual(self.stop("claude"), "block")
@@ -307,6 +308,37 @@ exit 17
         self.assertNotEqual(out.returncode, 0, refused)
         self.assertEqual(refused["result"], "NOT_RUN")
 
+    def test_opt_in_respects_the_configured_t0_argument(self):
+        self.opt_in('SW_T0_ARGS=lint\nSW_PREHANDOFF_CMD="scripts/dev/verify-slice.sh t0"\n')
+        out, result = self.request()
+        self.assertNotEqual(out.returncode, 0, result)
+        self.assertEqual(result["result"], "NOT_RUN")
+        self.assertFalse(self.counter.exists())
+        with self.config.open("a") as stream:
+            stream.write('SW_PREHANDOFF_CMD="scripts/dev/verify-slice.sh lint"\n')
+        out, result = self.request(rid="same-prehandoff")
+        self.assertEqual(out.returncode, 0, result)
+        self.handoff(result)
+        self.assertEqual(self.collect()[0]["state"], "DONE")
+
+    def test_opt_in_unavailable_hold_requires_the_exact_report(self):
+        self.opt_in()
+        self.verify.chmod(0o644)
+        (self.wt / ".blocked").write_text("HOLD wait\n")
+        for adapter in ("codex", "claude"):
+            with self.subTest(adapter=adapter):
+                self.assertEqual(self.stop(adapter), "block")
+        command = "scripts/dev/verify-slice.sh t0"
+        (self.wt / ".blocked").write_text(f"HOLD unavailable: {command}\n")
+        log = self.wt / ".unavailable-log"
+        log.write_text("verifier is not executable\n")
+        (self.wt / ".prehandoff-unavailable.json").write_text(
+            json.dumps({"command": command, "log": log.name})
+        )
+        for adapter in ("codex", "claude"):
+            with self.subTest(adapter=adapter):
+                self.assertIsNone(self.stop(adapter))
+
     def test_opt_in_required_verifier_failure_blocks_review_despite_pass_marker(self):
         self.opt_in()
         self.verifier("echo RESULT=pass\nexit 7")
@@ -317,25 +349,54 @@ exit 17
         self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
         self.assertEqual(self.stop("codex"), "block")
 
-    def test_opt_in_direct_invalid_evidence_cannot_enter_review(self):
+    def test_opt_in_imported_rows_cannot_stand_in_for_a_host_gate(self):
         self.opt_in()
         result = self.direct_gate(self.base)
+        staged = self.run_dir / "metrics" / "tiers.jsonl"
+        staged.parent.mkdir(parents=True)
+        self.tiers.replace(staged)
         self.handoff(result)
-        row = json.loads(self.tiers.read_text())
-        for change in (
-            {"exit_code": 3}, {"result": "NOT_RUN"}, {"state": "NOT_RUN"}, {"head_full": "a" * 40},
-            {"command": "different-verifier t1"}, {"log_sha256": "a" * 64},
-            {"accepted_base": "a" * 40}, {"inputs": {}},
-        ):
-            with self.subTest(change=change):
-                self.tiers.write_text(json.dumps({**row, **change}) + "\n")
-                self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
-        self.tiers.unlink()
+        for adapter in ("codex", "claude"):
+            self.assertEqual(self.stop(adapter), "block")
+        self.assertEqual(self.collect(merge=True)[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertTrue(self.tiers.exists())
+
+    def test_opt_in_newer_failed_host_run_invalidates_earlier_success_and_replay(self):
+        self.opt_in()
+        trigger = self.root / "fail-host-check"
+        self.verifier(f"echo RESULT=pass\n[ ! -f {shlex.quote(str(trigger))} ] || exit 7")
+        out, earlier = self.request(rid="earlier")
+        self.assertEqual(out.returncode, 0, earlier)
+        tip = self.base
+        trigger.touch()
+        out, latest = self.request(tip, rid="latest")
+        self.assertNotEqual(out.returncode, 0, latest)
+        self.assertEqual((latest["result"], latest["exit_code"]), ("fail", 7))
+        out, replay = self.request(tip, rid="earlier")
+        self.assertNotEqual(out.returncode, 0, replay)
+        self.assertEqual(replay["result"], "NOT_RUN")
+        self.handoff(earlier)
         self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertEqual(self.stop("codex"), "block")
+
+    def test_opt_in_open_writer_can_publish_a_review_repair(self):
+        self.opt_in()
+        out, previous = self.request(rid="initial")
+        self.assertEqual(out.returncode, 0, previous)
+        self.handoff(previous)
+        self.assertEqual(self.collect()[0]["state"], "DONE")
+        (self.wt / "source").write_text("repair for a reviewed finding")
+        repaired = self.commit()
+        self.assertEqual(self.collect()[0]["state"], "STALE-HANDOFF")
+        out, current = self.request(repaired, rid="repaired")
+        self.assertEqual(out.returncode, 0, current)
+        self.handoff(current)
+        self.assertEqual(self.collect()[0]["state"], "DONE")
 
     def test_opt_in_ambiguous_identity_keeps_legacy_check_and_hold(self):
         self.opt_in()
-        result = self.direct_gate(self.base)
+        out, result = self.request()
+        self.assertEqual(out.returncode, 0, result)
         self.handoff(result)
         other = "alloc-slice-07-r2"
         self.alloc(other, {"role": "slice-implementer", "worktree": str(self.wt),

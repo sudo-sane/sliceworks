@@ -22,7 +22,7 @@ fi
 # In the opt-in, the collector distinguishes an intermediate return from a
 # completed candidate. A HOLD or an unresolved allocation uses the old checks.
 candidate_stop=LEGACY
-if [ "$SW_VERIFY_CADENCE" = candidate ] && [ ! -f "$root/.blocked" ]; then
+if [ "$SW_VERIFY_CADENCE" = candidate ]; then
   candidate_stop="$(PYTHONDONTWRITEBYTECODE=1 python3 "$(dirname "$0")/../scripts/collect.py" \
     --root "$SW_ROOT" --state-dir "$SW_STATE_DIR" --candidate-stop "$root" \
     --allocation "${SW_ALLOCATION:-}" 2>/dev/null)" || candidate_stop=LEGACY
@@ -36,6 +36,10 @@ fi
 # Preserve the legacy unconfigured-project behavior only for the default T0 command.
 script="$root/$SW_VERIFY_CMD"; [ -x "$script" ] || script="$SW_ROOT/$SW_VERIFY_CMD"
 if [ "$SW_PREHANDOFF_CMD" = "$SW_VERIFY_CMD $SW_T0_ARGS" ] && [ ! -x "$script" ]; then
+  if [ "$candidate_stop" = HOLD ]; then
+    jq -n --arg r "HOLD needs a passing pre-handoff check or the exact unavailable-command record for $SW_PREHANDOFF_CMD."       '{decision:"block", reason:$r}'
+    exit 0
+  fi
   echo "sliceworks: T0 gate skipped, no executable at $SW_VERIFY_CMD (set SW_VERIFY_CMD in .sliceworks/config.env)" >&2
   exit 0
 fi

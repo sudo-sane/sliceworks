@@ -11,13 +11,13 @@
 # MISSING-WORKTREE. After the allocations it prints UNREGISTERED lines for worktrees, pid files and result-less logs
 # that no open allocation owns, so an empty registry is never a clean report.
 # Detection is read-only by default. --merge-worker-metrics imports staged rows as the coordinator; no message is sent.
-import argparse, json, os, pathlib, re, shlex, subprocess, sys
+import argparse, json, os, pathlib, re, subprocess, sys
 import fcntl
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from safe_git import git_command
 from survey import read_config
-from verification_source import (FULL_SHA, accepted_base, candidate_command, candidate_policy,
-                                 file_digest, gate_artifacts_match, last_result, require_ancestor,
+from verification_source import (FULL_SHA, accepted_base, candidate_command, candidate_gate_record,
+                                 candidate_policy, gate_artifacts_match, last_result, require_ancestor,
                                  require_sealed_checkout)
 
 
@@ -97,6 +97,8 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir, policy=None):
         match = re.fullmatch(r"gate-([A-Za-z0-9_-]{1,80})\.log", lp.name)
         if match:
             request_id = request_id or match[1]
+    if policy and request_id is None:
+        return False, "candidate cadence requires a named host gate"
     if request_id is not None:
         expected = {"request_id": request_id, "head": head, "base": alloc["base"],
                     "allocation": alloc["id"], "slice": alloc["slice"], "worktree": str(wt.resolve()),
@@ -111,6 +113,9 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir, policy=None):
             expected["accepted_base"] = accepted_base(alloc)
             if policy:
                 expected.update(inputs=policy[1], command=candidate_command(policy[0], wt, alloc))
+                latest = json.loads(candidate_gate_record(root, expected).read_text())
+                if latest != receipt:
+                    raise ValueError("receipt differs from the latest actual host gate for this candidate")
             if (not isinstance(receipt, dict)
                     or type(receipt.get("exit_code")) is not int
                     or any(receipt.get(key) != value for key, value in expected.items())
@@ -121,7 +126,7 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir, policy=None):
         return True, f"{log} RESULT=pass (gate receipt {request_id})"
 
     tiers = root / state_dir / "metrics" / "tiers.jsonl"
-    scoped = policy is not None or "accepted_base" in alloc
+    scoped = "accepted_base" in alloc
     if tiers.exists():
         try:
             rows = [json.loads(line) for line in tiers.read_text().splitlines() if line.strip()]
@@ -144,16 +149,6 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir, policy=None):
             if (type(latest.get("exit_code")) is not int
                     or any(latest.get(key) != value for key, value in expected.items())):
                 return False, "latest row for the named log does not prove this allocation, checkout and source"
-            if policy:
-                try:
-                    command = shlex.split(latest.get("command", ""))
-                except (ValueError, AttributeError, TypeError):
-                    return False, "invalid candidate command in tier evidence"
-                if (command != candidate_command(policy[0], wt, alloc)
-                        or latest.get("state") not in ("executed", "runtime-verified")
-                        or latest.get("inputs") != policy[1]
-                        or latest.get("log_sha256") != file_digest(lp)):
-                    return False, "tier row does not prove the configured candidate verifier and log"
             return True, f"{log} RESULT=pass (matching tier row)"
         named = any(same_log for _, same_log in matching)
         legacy = [row for row, same_log in matching if (same_log if named else not row.get("log"))
@@ -288,13 +283,14 @@ def candidate_stop(root, state_dir, wt, run_dir, allocation_id):
     if cfg.get("SW_VERIFY_CADENCE") != "candidate":
         return "LEGACY"
     try:
-        candidate_policy(root)
         matches = list(candidate_allocations(root, state_dir, wt, cfg))
         if len(matches) != 1:
             return "LEGACY"
         if matches[0].get("state") != "open" or (allocation_id and matches[0]["id"] != allocation_id):
             return "LEGACY"
         state, _ = candidate_handoff(root, state_dir, matches[0], wt, run_dir)
+        if state in ("STOPPED-NO-HANDOFF", "STALE-HANDOFF"):
+            candidate_policy(root)
         return state
     except (OSError, ValueError, KeyError, TypeError):
         return "LEGACY"

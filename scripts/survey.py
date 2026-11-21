@@ -30,7 +30,7 @@ def read_config(root):
         return None
     for line in p.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
-        m = re.match(r"^([A-Z_]+)=(.*)$", line)
+        m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line)
         if m:
             cfg[m.group(1)] = m.group(2).strip().strip('"').strip("'")
     return cfg

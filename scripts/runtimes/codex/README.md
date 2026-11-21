@@ -142,14 +142,20 @@ worktree. It records the exact command and hashes of the current project configu
 verifier in `inputs.config_sha256` and `inputs.verifier_sha256`. An existing standalone
 `SW_PREHANDOFF_CMD` must be moved into the complete verifier before opting in.
 
-For direct verification, run the same invocation, seal the source before and after it runs,
-and have the trusted project verifier record the scoped T1 tier row in the main metrics
-ledger. Supply the full head, assigned and accepted bases, allocation, slice, resolved
-worktree, shell-quoted command, exact log, log SHA-256, execution state, actual exit and the two input hashes
-above. Use paths beneath the main project for these records. The collector requires that
-direct evidence or the named fresh broker receipt. A raw result line, an old verifier
-configuration, or missing evidence cannot admit review. Both paths accept a committed
-handoff-only child and report the exact reviewed source.
+Both worker runtimes use the same host runner for candidate admission. Codex's
+supervisor services the request. For a Claude writer, the coordinator arranges for the
+host runner to service the existing gate request while the source is sealed and before
+the writer commits the handoff. Use the request fields above under
+`<run>/codex/<allocation>` and the same protected `gate-runner.sh <allocation>`
+invocation. Enable the cadence only when that host service is available. The worker
+publishes the handoff after it observes the receipt.
+
+The runner keeps the latest actual result for the exact candidate and verification
+policy in host-owned Git metadata. The collector matches the named receipt to that
+record before admitting review. An older pass cannot replace a later failure or
+unavailable check. Replaying a receipt does not create a new attempt. Imported tier
+rows remain telemetry. A committed handoff-only child carries the exact reviewed SHA.
+Keep the writer allocation open until review and any `FINDINGS` repair are complete.
 
 ## Writable telemetry and pre-handoff checks
 

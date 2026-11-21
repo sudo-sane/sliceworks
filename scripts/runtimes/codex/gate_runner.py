@@ -16,9 +16,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from safe_git import git_command
-from verification_source import (accepted_base, candidate_command, candidate_policy, coverage_path, cumulative_changes,
-                                 file_digest, gate_artifacts_match, last_result,
-                                 require_ancestor, require_sealed_checkout)
+from verification_source import (accepted_base, candidate_command, candidate_gate_record, candidate_policy,
+                                 coverage_path, cumulative_changes, file_digest, gate_artifacts_match,
+                                 last_result, require_ancestor, require_sealed_checkout)
 
 
 def atomic_json(path, value):
@@ -55,6 +55,7 @@ def run(aid):
     active = run_dir / 'gate-active.json'
     owned_active = False
     owned_log = False
+    authoritative = None
     try:
         if request.is_symlink() or active.exists() or active.is_symlink():
             raise ValueError('symlink request or unresolved active gate; inspect before retrying')
@@ -107,10 +108,23 @@ def run(aid):
         if (root / os.environ['SW_STOP_FILE']).exists():
             raise ValueError('STOP kill switch present')
         policy = candidate_policy(root)
+        if policy:
+            if os.environ['SW_VERIFY_CADENCE'] != 'candidate' or not alloc.get('branch'):
+                raise ValueError('candidate cadence requires matching launcher configuration and allocation branch')
+            if os.environ['SW_PREHANDOFF_CMD'] != f"{os.environ['SW_VERIFY_CMD']} {os.environ['SW_T0_ARGS']}":
+                raise ValueError('candidate cadence requires the complete configured T1 verifier')
+            command = candidate_command(policy[0], wt, alloc)
+            result.update(inputs=policy[1], command=command)
+            host_record = candidate_gate_record(root, result)
+            if saved is None:
+                host_record.parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(host_record, {**result, "result": "NOT_RUN", "error": "host gate pending"})
+                authoritative = host_record
+            elif json.loads(host_record.read_text()) != saved:
+                raise ValueError('saved gate is no longer the latest actual host gate for this candidate')
+        elif os.environ['SW_VERIFY_CADENCE'] == 'candidate':
+            raise ValueError('candidate cadence differs between the prepared launcher and project policy')
         if saved is not None:
-            if policy and (saved.get('inputs') != policy[1]
-                           or saved.get('command') != candidate_command(policy[0], wt, alloc)):
-                raise ValueError('saved gate used a different candidate verification policy')
             if not gate_artifacts_match(saved, run_dir, rid):
                 raise ValueError('saved gate artifacts are incomplete or changed; use a new request_id')
             result = {**saved, 'delivery': 'replayed'}
@@ -179,10 +193,14 @@ def run(aid):
             with Path(result['log']).open('a') as out:
                 out.write('\nRESULT=' + result['result'] + '\n')
     finally:
-        atomic_json(run_dir / 'gate-result.json', result)
-        if owned_active and active.exists():
-            active.replace(run_dir / 'gate-request.last.json')
-        lock.rmdir()
+        try:
+            if authoritative is not None:
+                atomic_json(authoritative, result)
+            atomic_json(run_dir / 'gate-result.json', result)
+        finally:
+            if owned_active and active.exists():
+                active.replace(run_dir / 'gate-request.last.json')
+            lock.rmdir()
     return 0 if result['result'] == 'pass' else 1
 
 

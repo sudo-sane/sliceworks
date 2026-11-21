@@ -46,7 +46,7 @@ maps the collector's states to the next action. Adopt a running project by regis
 unowned worktrees and live evidence into allocations first. Run the collector at resume
 and after each wake. Any runtime chat inspection is read-only and secondary. Record
 fine-grained progress in the result or handoff and finish the allocation with `collected`
-or `closed`.
+or `closed` when its applicable review and repair are complete.
 
 Rules that follow:
 
@@ -99,7 +99,9 @@ Infrastructure, process and fix work is allocated with `unblocks`: the product r
 In [candidate cadence](05-verification.md#candidate-cadence), a stopped worker without a
 handoff can resume the same allocation. A still-live check keeps its existing handle.
 A candidate handoff is committed on the exact checked source or as a child commit containing
-only the handoff. Resume and reviewer dispatch use the collector's exact result.
+only the handoff. Resume and reviewer dispatch use the collector's exact host gate
+result. Leave the writer open during review and any findings repair. Collect it once
+the exact outcome is accepted or the allocation is explicitly abandoned.
 
 ## Bounded repair
 

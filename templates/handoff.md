@@ -19,7 +19,7 @@ written: <timestamp>
 ## Verification
 <what ran, from which commit, with which boundary (compile-only, executed, runtime); the RESULT line; what was NOT_RUN and why>
 
-<for candidate cadence, use the exact checked source in head and commit only this handoff above it>
+<for candidate cadence, name the host gate request, use the exact checked source in head, and commit only this handoff above it>
 
 <accepted base, cumulative preparation log and scope limits; connected healthy and adverse observations with timestamps, or the missing precondition>
 

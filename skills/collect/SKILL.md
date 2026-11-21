@@ -19,9 +19,11 @@ Method: `method/19-allocation-and-completion.md`. Script: `${CLAUDE_PLUGIN_ROOT}
 2. Act on each state, without a message to the worker:
    - `RUNNING` or `QUEUED`: ongoing work; a live test or a wait in a resource queue is not a stall. Do nothing, and never start a duplicate writer.
    - `CANDIDATE-UNVERIFIED`: the handoff does not prove exact passing evidence. Reconcile the named artifacts first. Run the required gate only for a valid completed candidate, or return the slice to repair with the discrepancy.
-   - `DONE`: read the handoff and its supporting receipt or tier evidence, start the
-     already-authorized next step (normally independent review), and set the allocation
-     `collected`.
+   - `DONE`: read the handoff and its supporting evidence. Before starting review,
+     check whether a reviewer allocation already covers the same writer and candidate
+     SHA. Start review once and leave a candidate-cadence writer open so it can repair
+     findings. Set that writer `collected` after acceptance or explicit abandonment.
+     With the default cadence, set the allocation `collected` at this handoff.
    - `BLOCKED` or `HOLD`: read the handoff's blockers and the default the worker would apply; decide (class B) or route to the owner (A1); re-dispatch from the branch with a new allocation when unblocked.
    - `STALE-HANDOFF`: under candidate cadence, resume the same allocation to finish the changed candidate. Otherwise, the worker committed after writing the handoff; read the branch log; if the worker is gone, treat the last commit as a checkpoint and run the required gate yourself (chapter 19, execution identity).
    - `STOPPED-NO-HANDOFF`: under candidate cadence, resume the same allocation. Otherwise, nothing runs and nothing was written. Inspect the worktree (`git status`, `git log`), the stop-gate output and the worker's last message **read-only** before anything else; then either run the authorized gate on the checkpoint or re-dispatch with a fresh allocation. Never send "are you done".

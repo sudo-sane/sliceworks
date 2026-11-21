@@ -99,6 +99,18 @@ def candidate_policy(root):
     }
 
 
+def candidate_gate_record(root, expected):
+    """Latest host attempt for an exact candidate and verification policy."""
+    fields = ("head", "base", "accepted_base", "allocation", "slice", "worktree", "tier", "inputs", "command")
+    identity = {field: expected[field] for field in fields}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    common = root / ".git"
+    path = common / "sliceworks-candidate-gates" / identity["allocation"] / (key + ".json")
+    if path.resolve() != path or not path.is_relative_to(common):
+        raise ValueError("candidate gate record must be in host-owned Git metadata")
+    return path
+
+
 def candidate_command(verifier, worktree, allocation):
     return [verifier, "--cwd", str(worktree.resolve()), "--slice", allocation["slice"],
             "--base", allocation["base"], "t1"]

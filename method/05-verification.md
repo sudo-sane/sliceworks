@@ -15,7 +15,7 @@ The tier *structure* is the method's; the *commands* behind each tier are the pr
 ## Candidate cadence
 
 The default `SW_VERIFY_CADENCE=turn` keeps the T0 Stop hook and T1 candidate gate. A project
-can explicitly adopt `SW_VERIFY_CADENCE=candidate` to complete one observable slice before
+can explicitly set the literal `SW_VERIFY_CADENCE=candidate` in its configuration to complete one observable slice before
 one coordinated verification and review cycle. Keep ordinary edits in the same allocation.
 Use an earlier checkpoint when a named unresolved question needs a narrower control.
 
@@ -29,10 +29,11 @@ and milestone gates at their existing points.
 At an intermediate worker stop, a uniquely registered active allocation may continue without
 a full verification or any review admission. HOLD keeps its normal checks. On one exact
 completed candidate, make the first connected control the start of the verification cycle.
-The collector admits review only from a committed handoff and exact direct or brokered
-evidence. A handoff-only child commit carries the evidence pointer; the source in the
-evidence is the reviewed revision. The [runtime adapter](../scripts/runtimes/codex/README.md#completed-candidate-cadence)
-specifies the exact receipts and applies the same collection rules to direct verification.
+The collector admits review from a committed handoff and the latest actual host gate
+receipt for that source and policy. A handoff-only child commit carries the evidence
+pointer; the source in the evidence is the reviewed revision. The
+[runtime adapter](../scripts/runtimes/codex/README.md#completed-candidate-cadence) describes
+how either worker runtime uses the existing host runner.
 
 ## Preparation and first behavior evidence
 
