@@ -133,6 +133,24 @@ the bindings the collector requires for a current candidate.
 For a project-owned copy of the runtime, update `scripts/verification_source.py` with
 `scripts/collect.py` and `gate_runner.py`.
 
+## Completed candidate cadence
+
+The opt-in in [method chapter 5](../../../method/05-verification.md#candidate-cadence) uses
+the existing configured T1 verifier as the complete candidate check. The broker invokes
+`<main verifier> --cwd <worktree> --slice <slice> --base <assigned base> t1` from the assigned
+worktree. It records the exact command and hashes of the current project configuration and
+verifier in `inputs.config_sha256` and `inputs.verifier_sha256`. An existing standalone
+`SW_PREHANDOFF_CMD` must be moved into the complete verifier before opting in.
+
+For direct verification, run the same invocation, seal the source before and after it runs,
+and have the trusted project verifier record the scoped T1 tier row in the main metrics
+ledger. Supply the full head, assigned and accepted bases, allocation, slice, resolved
+worktree, shell-quoted command, exact log, log SHA-256, execution state, actual exit and the two input hashes
+above. Use paths beneath the main project for these records. The collector requires that
+direct evidence or the named fresh broker receipt. A raw result line, an old verifier
+configuration, or missing evidence cannot admit review. Both paths accept a committed
+handoff-only child and report the exact reviewed source.
+
 ## Writable telemetry and pre-handoff checks
 
 The dispatcher exports these runtime paths (they are derived environment values, not project config keys):
@@ -145,7 +163,7 @@ The dispatcher exports these runtime paths (they are derived environment values,
 
 A project verifier must append tier rows to `${SW_TIERS_FILE:-<state-dir>/metrics/tiers.jsonl}` and route its other worker metric files through `SW_METRICS_DIR` when set. Adapt every hard-coded state append and directory creation, including early failure paths; creating the canonical state metrics directory itself can fail in a writer sandbox. Outputs and the run directory are writable roots; the coordinator state directory is not added. Ordinary coordinator runs can keep canonical paths. `collect.py --root <repo> --merge-worker-metrics` imports complete JSONL object rows into `<state-dir>/metrics/`, under a collector lock and without duplicating previously imported rows. Ordinary collection remains read-only. Only the coordinator runs the merge mode. Imports preserve worker claims; they do not replace review or independently authenticate a pass.
 
-Set `SW_PREHANDOFF_CMD` to lint and every database-free test for the changed packages, including migration registries and other file checks. Empty means `SW_VERIFY_CMD SW_T0_ARGS` (normally T0). Report commands, exit results and logs in the handoff. The implementer Stop gate runs this even with an empty or HOLD `.blocked` marker, then keeps the original T0 gate for candidates. A true BLOCKED return can stop before implementation. A HOLD that cannot run its pre-handoff command must put the exact command in `.blocked` and preserve nonempty output, with `.prehandoff-unavailable.json` containing `command` equal to the configured command and `log` pointing to that output. Remove the exemption and `.blocked` before the next attempt. Budget and STOP escapes remain available.
+Under the default cadence, set `SW_PREHANDOFF_CMD` to lint and every database-free test for the changed packages, including migration registries and other file checks. Empty means `SW_VERIFY_CMD SW_T0_ARGS` (normally T0). Report commands, exit results and logs in the handoff. The implementer Stop gate runs this even with an empty or HOLD `.blocked` marker, then keeps the original T0 gate for candidates. A true BLOCKED return can stop before implementation. A HOLD that cannot run its pre-handoff command must put the exact command in `.blocked` and preserve nonempty output, with `.prehandoff-unavailable.json` containing `command` equal to the configured command and `log` pointing to that output. Remove the exemption and `.blocked` before the next attempt. Budget and STOP escapes remain available.
 
 ## Updating a project-local copy from 0.8.0
 

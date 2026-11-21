@@ -95,6 +95,11 @@
       "type": "string",
       "description": "the exact command line that ran"
     },
+    "log_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "content digest of the exact execution log for candidate cadence"
+    },
     "exit_code": {
       "type": "integer"
     },

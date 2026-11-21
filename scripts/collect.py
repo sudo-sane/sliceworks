@@ -11,11 +11,14 @@
 # MISSING-WORKTREE. After the allocations it prints UNREGISTERED lines for worktrees, pid files and result-less logs
 # that no open allocation owns, so an empty registry is never a clean report.
 # Detection is read-only by default. --merge-worker-metrics imports staged rows as the coordinator; no message is sent.
-import argparse, json, os, pathlib, re, subprocess, sys
+import argparse, json, os, pathlib, re, shlex, subprocess, sys
 import fcntl
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from safe_git import git_command
-from verification_source import FULL_SHA, accepted_base, gate_artifacts_match, last_result
+from survey import read_config
+from verification_source import (FULL_SHA, accepted_base, candidate_command, candidate_policy,
+                                 file_digest, gate_artifacts_match, last_result, require_ancestor,
+                                 require_sealed_checkout)
 
 
 def git(cwd, *args):
@@ -68,7 +71,7 @@ def latest_log_result(root, log_dir):
     return str(logs[-1].relative_to(root)), (m[-1] if m else None)
 
 
-def verification_proven(root, state_dir, h, alloc, wt, run_dir):
+def verification_proven(root, state_dir, h, alloc, wt, run_dir, policy=None):
     """Match the handoff to the specific execution, with legacy tier-log support."""
     head = h.get("head")
     if not head or not FULL_SHA.fullmatch(head) or h.get("base") != alloc["base"]:
@@ -79,6 +82,8 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir):
     if not log:
         return False, "handoff names no log"
     lp = (root / log).absolute()
+    if policy and (lp.is_symlink() or not lp.resolve().is_relative_to(root)):
+        return False, "candidate log must be inside the project"
     if not lp.is_file():
         return False, f"log {log} not found"
     marker = last_result(lp)
@@ -104,6 +109,8 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir):
                 raise ValueError("symlink gate artifacts")
             receipt = json.loads(path.read_text())
             expected["accepted_base"] = accepted_base(alloc)
+            if policy:
+                expected.update(inputs=policy[1], command=candidate_command(policy[0], wt, alloc))
             if (not isinstance(receipt, dict)
                     or type(receipt.get("exit_code")) is not int
                     or any(receipt.get(key) != value for key, value in expected.items())
@@ -114,7 +121,7 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir):
         return True, f"{log} RESULT=pass (gate receipt {request_id})"
 
     tiers = root / state_dir / "metrics" / "tiers.jsonl"
-    scoped = "accepted_base" in alloc
+    scoped = policy is not None or "accepted_base" in alloc
     if tiers.exists():
         try:
             rows = [json.loads(line) for line in tiers.read_text().splitlines() if line.strip()]
@@ -131,12 +138,22 @@ def verification_proven(root, state_dir, h, alloc, wt, run_dir):
                 matching.append((row, same_log))
         if scoped:
             latest = next((row for row, same_log in reversed(matching) if same_log), {})
-            expected = {"head_full": head, "base": alloc["base"], "accepted_base": alloc["accepted_base"],
+            expected = {"head_full": head, "base": alloc["base"], "accepted_base": accepted_base(alloc),
                         "slice": alloc["slice"], "allocation": alloc["id"], "worktree": str(wt.resolve()),
                         "tier": "t1", "result": "pass", "exit_code": 0}
             if (type(latest.get("exit_code")) is not int
                     or any(latest.get(key) != value for key, value in expected.items())):
                 return False, "latest row for the named log does not prove this allocation, checkout and source"
+            if policy:
+                try:
+                    command = shlex.split(latest.get("command", ""))
+                except (ValueError, AttributeError, TypeError):
+                    return False, "invalid candidate command in tier evidence"
+                if (command != candidate_command(policy[0], wt, alloc)
+                        or latest.get("state") not in ("executed", "runtime-verified")
+                        or latest.get("inputs") != policy[1]
+                        or latest.get("log_sha256") != file_digest(lp)):
+                    return False, "tier row does not prove the configured candidate verifier and log"
             return True, f"{log} RESULT=pass (matching tier row)"
         named = any(same_log for _, same_log in matching)
         legacy = [row for row, same_log in matching if (same_log if named else not row.get("log"))
@@ -193,7 +210,97 @@ def unregistered(root, state_dir, allocs, worktree_root, outputs_dir):
     return out
 
 
-def assess(root, state_dir, alloc, run_dir=".run"):
+def candidate_identity(root, wt, alloc):
+    return (wt.resolve() != root and git(wt, "rev-parse", "--show-toplevel") == str(wt.resolve())
+            and git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir") == str(root / ".git")
+            and isinstance(alloc.get("branch"), str)
+            and git(wt, "symbolic-ref", "--short", "HEAD") == alloc["branch"])
+
+
+def candidate_handoff(root, state_dir, alloc, wt, run_dir):
+    """Assess an opt-in handoff without declaring a live worker finished."""
+    if not candidate_identity(root, wt, alloc):
+        return "CANDIDATE-UNVERIFIED", "worktree or branch differs from the allocation"
+    marker = wt / ".blocked"
+    if marker.exists():
+        with marker.open(errors="replace") as stream:
+            if stream.readline().startswith("BLOCKED"):
+                return "BLOCKED", "worker recorded BLOCKED"
+        return "HOLD", "worker recorded HOLD"
+
+    relative = f"{state_dir}/handoffs/{alloc['id']}.md"
+    handoff = wt / relative
+    if not handoff.exists():
+        return "STOPPED-NO-HANDOFF", f"no {relative}; allocation may continue"
+    text = handoff.read_text(errors="replace")
+    h = parse_handoff(text)
+    state = h.get("result")
+    if state in ("HOLD", "BLOCKED"):
+        return state, f"handoff {relative}"
+    head = git(wt, "rev-parse", "HEAD")
+    if not head or h.get("allocation") != alloc["id"] or state != "CANDIDATE" or not h.get("head"):
+        return "CANDIDATE-UNVERIFIED", "missing or mismatched candidate handoff"
+    if git(wt, "show", head + ":" + relative) != text.strip():
+        return "CANDIDATE-UNVERIFIED", "candidate handoff differs from the committed checkout"
+    source = h["head"]
+    if source != head and not (
+        git(wt, "rev-parse", "HEAD^") == source
+        and git(wt, "diff", "--name-only", "-z", "--no-renames", source, head, "--") == relative + "\0"
+    ):
+        return "STALE-HANDOFF", "candidate handoff does not describe the checkout head"
+    try:
+        require_sealed_checkout(wt, head)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return "STALE-HANDOFF", "checkout has moved or contains further work"
+    try:
+        require_ancestor(wt, alloc["base"], source)
+        require_ancestor(wt, accepted_base(alloc), alloc["base"])
+        policy = candidate_policy(root)
+        if not policy:
+            raise ValueError("candidate policy not configured")
+        proven, why = verification_proven(root, state_dir, h, alloc, wt, run_dir, policy)
+    except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+        return "CANDIDATE-UNVERIFIED", str(exc)
+    return ("DONE" if proven else "CANDIDATE-UNVERIFIED"), f"candidate at {source}, {why}"
+
+
+def uses_candidate_cadence(alloc, cfg):
+    return (cfg.get("SW_VERIFY_CADENCE") == "candidate"
+            and alloc.get("role", "").split(":")[-1] == "slice-implementer"
+            and alloc.get("mode", "full") == "full")
+
+
+def candidate_allocations(root, state_dir, wt, cfg):
+    for path in (root / state_dir / "allocations").glob("*.json"):
+        alloc = json.loads(path.read_text())
+        if not isinstance(alloc, dict):
+            raise ValueError(f"invalid allocation: {path.name}")
+        if (alloc.get("id") != path.stem or alloc.get("state") not in ("open", "stopped")
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", path.stem)
+                or not uses_candidate_cadence(alloc, cfg)):
+            continue
+        if (root / alloc["worktree"]).resolve() == wt and candidate_identity(root, wt, alloc):
+            yield alloc
+
+
+def candidate_stop(root, state_dir, wt, run_dir, allocation_id):
+    cfg = read_config(root) or {}
+    if cfg.get("SW_VERIFY_CADENCE") != "candidate":
+        return "LEGACY"
+    try:
+        candidate_policy(root)
+        matches = list(candidate_allocations(root, state_dir, wt, cfg))
+        if len(matches) != 1:
+            return "LEGACY"
+        if matches[0].get("state") != "open" or (allocation_id and matches[0]["id"] != allocation_id):
+            return "LEGACY"
+        state, _ = candidate_handoff(root, state_dir, matches[0], wt, run_dir)
+        return state
+    except (OSError, ValueError, KeyError, TypeError):
+        return "LEGACY"
+
+
+def assess(root, state_dir, alloc, run_dir=".run", candidate_config=None):
     wt = pathlib.Path(alloc["worktree"])
     wt = wt if wt.is_absolute() else root / wt
     if not wt.exists():
@@ -208,6 +315,17 @@ def assess(root, state_dir, alloc, run_dir=".run"):
     log, result = latest_log_result(root, log_dir)
     if log and result is None:
         return "RUNNING", f"{log} has no RESULT= yet"
+    if candidate_config is not None:
+        try:
+            ids = [item["id"] for item in candidate_allocations(root, state_dir, wt.resolve(), candidate_config)]
+            if ids != [alloc["id"]]:
+                return "CANDIDATE-UNVERIFIED", "candidate requires one matching registered allocation"
+            gate_dir = root / run_dir / "codex" / alloc["id"]
+            if any((gate_dir / name).exists() for name in ("gate-request.json", "gate-active.json", "gate.lock")):
+                return "QUEUED", "host gate request awaits completion or reconciliation"
+            return candidate_handoff(root, state_dir, alloc, wt, run_dir)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return "CANDIDATE-UNVERIFIED", str(exc)
     head = git(wt, "rev-parse", "HEAD")
     handoff_rel = f"{state_dir}/handoffs/{alloc['id']}.md"
     handoff_path = wt / handoff_rel
@@ -297,6 +415,8 @@ def main(argv=None):
     ap.add_argument("--root", default=".")
     ap.add_argument("--state-dir", default=None)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--candidate-stop", type=pathlib.Path, metavar="WORKTREE")
+    ap.add_argument("--allocation", default="", help="trusted launcher allocation for --candidate-stop")
     ap.add_argument("--merge-worker-metrics", action="store_true", help="coordinator: import staged worker rows before assessing allocations")
     a = ap.parse_args(argv)
     root = pathlib.Path(a.root).resolve()
@@ -315,12 +435,16 @@ def main(argv=None):
         m = re.search(r"^SW_WORKTREE_ROOT=(\S+)", t, re.M); worktree_root = m.group(1).strip('"') if m else worktree_root
         m = re.search(r"^SW_OUTPUTS_DIR=(\S+)", t, re.M); outputs_dir = m.group(1).strip('"') if m else outputs_dir
         m = re.search(r"^SW_RUN_DIR=(\S+)", t, re.M); run_dir = m.group(1).strip('"') if m else run_dir
+    if a.candidate_stop is not None:
+        print(candidate_stop(root, state_dir, a.candidate_stop.resolve(), run_dir, a.allocation))
+        return 0
     if a.merge_worker_metrics:
         if os.environ.get("SW_ROLE"):
             raise SystemExit("collect: only the coordinator merges worker metrics")
         merge_worker_metrics(root, state_dir, run_dir)
     adir = root / state_dir / "allocations"
     rows = []; open_allocs = []
+    config = read_config(root) or {}
     for f in sorted(adir.glob("*.json")) if adir.is_dir() else []:
         try:
             alloc = json.loads(f.read_text())
@@ -329,10 +453,13 @@ def main(argv=None):
         if alloc.get("state") in ("closed", "collected"):
             continue
         open_allocs.append(alloc)
-        state, detail = assess(root, state_dir, alloc, run_dir)
+        candidate = uses_candidate_cadence(alloc, config)
+        state, detail = assess(root, state_dir, alloc, run_dir, config if candidate else None)
         w = alloc.get("worker") or {}; ex = alloc.get("execution") or {}
         rows.append({"id": alloc["id"], "slice": alloc.get("slice"), "role": alloc.get("role"), "state": state, "detail": detail,
                      "chat": w.get("chat_id"), "session": ex.get("session_id") or w.get("id")})
+        if candidate:
+            rows[-1]["cadence"] = "candidate"
         gate = reported_gate(root, run_dir, alloc["id"])
         if gate:
             rows[-1]["gate"] = gate
@@ -342,7 +469,8 @@ def main(argv=None):
     else:
         for r in rows:
             ids = " ".join(f"{k}={v}" for k, v in (("chat", r.get("chat")), ("session", r.get("session"))) if v)
-            print(f"ALLOC {r['id']} {r['state']} {r['detail']}{(' [' + ids + ']') if ids else ''}")
+            cadence = " [candidate cadence]" if r.get("cadence") == "candidate" else ""
+            print(f"ALLOC {r['id']} {r['state']} {r['detail']}{cadence}{(' [' + ids + ']') if ids else ''}")
             if gate := r.get("gate"):
                 print(f"GATE {r['id']} {gate.get('request_id') or '-'} {gate['result']} "
                       f"{gate.get('head') or '-'} {gate.get('log') or gate.get('error') or '-'}")

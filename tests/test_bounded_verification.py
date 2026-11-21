@@ -1,6 +1,8 @@
 """Exercise the verifier, collector and selector against disposable Git worktrees."""
 
+import hashlib
 import json
+import shlex
 import pathlib
 import subprocess
 import sys
@@ -53,13 +55,13 @@ class BoundedVerification(runtime.Project):
     def handoff(self, result, commit=True):
         path = self.wt / "docs/process/handoffs" / (AID + ".md")
         path.parent.mkdir(parents=True, exist_ok=True)
+        request = f"gate_request: {result['request_id']}\n" if "request_id" in result else ""
         path.write_text(f"""---
 allocation: {AID}
 result: CANDIDATE
 head: {result['head']}
 base: {result['base']}
-gate_request: {result['request_id']}
-verification: {{tier: t1, log: {result['log']}, result: pass}}
+{request}verification: {{tier: t1, log: {result['log']}, result: pass}}
 ---
 """)
         if commit:
@@ -213,6 +215,141 @@ exit 17
         (self.wt / "new source").write_text("unchecked")
         self.commit()
         self.assertEqual(self.collect()[0]["state"], "STALE-HANDOFF")
+
+    def opt_in(self, extra=""):
+        self.config = self.root / ".sliceworks/config.env"
+        with self.config.open("a") as stream:
+            stream.write("SW_VERIFY_CADENCE=candidate\n" + extra)
+        self.counter = self.root / "gate-invocations"
+        self.verifier(f"echo run >> {shlex.quote(str(self.counter))}\necho RESULT=pass")
+
+    def stop(self, adapter, allocation=AID):
+        event = {"cwd": str(self.wt), "stop_hook_active": False}
+        env = self.environment()
+        if adapter == "codex":
+            event.update(turn_id="turn", hook_event_name="Stop")
+            env.update(SW_ROLE="slice-implementer", SW_ALLOCATION=allocation)
+        else:
+            event.update(agent_type="sliceworks:slice-implementer", hook_event_name="SubagentStop")
+        run = subprocess.run(["sh", str(PKG / "hooks/implementer-stop.sh")],
+                             cwd=self.root, env=env, input=json.dumps(event),
+                             capture_output=True, text=True, timeout=20, check=True)
+        return json.loads(run.stdout).get("decision") if run.stdout else None
+
+    def direct_gate(self, head):
+        command = [str(self.verify), "--cwd", str(self.wt), "--slice", "slice-07",
+                   "--base", self.base, "t1"]
+        log = self.root / "direct.log"
+        with log.open("w") as stream:
+            run = subprocess.run(command, cwd=self.wt, stdout=stream, check=True)
+        row = {"head_full": head, "base": self.base, "accepted_base": self.base,
+               "slice": "slice-07", "allocation": AID, "worktree": str(self.wt),
+               "tier": "t1", "state": "executed", "result": "pass", "exit_code": run.returncode, "log": str(log),
+               "command": shlex.join(command), "log_sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+               "inputs": {"config_sha256": hashlib.sha256(self.config.read_bytes()).hexdigest(),
+                          "verifier_sha256": hashlib.sha256(self.verify.read_bytes()).hexdigest()}}
+        self.tiers = self.root / "docs/process/metrics/tiers.jsonl"
+        self.tiers.write_text(json.dumps(row) + "\n")
+        return {"head": head, "base": self.base, "log": str(log)}
+
+    def test_opt_in_stop_and_committed_handoff_use_one_gate(self):
+        self.opt_in()
+        (self.wt / "source").write_text("first checkpoint")
+        self.commit()
+        for adapter in ("codex", "claude"):
+            self.assertIsNone(self.stop(adapter))
+            self.assertEqual(self.collect()[0]["state"], "STOPPED-NO-HANDOFF")
+            self.assertFalse(self.counter.exists())
+        (self.wt / "source").write_text("completed outcome")
+        head = self.commit()
+        result = self.direct_gate(head)
+        self.handoff(result, commit=False)
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertEqual(self.stop("claude"), "block")
+        self.commit()
+        for adapter in ("claude", "codex"):
+            self.assertIsNone(self.stop(adapter))
+            complete = self.collect()[0]
+            self.assertEqual(complete["state"], "DONE")
+            self.assertIn(head, complete["detail"])
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+        (self.wt / "source").write_text("repair in progress")
+        self.assertEqual(self.collect()[0]["state"], "STALE-HANDOFF")
+        self.assertIsNone(self.stop("codex"))
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+
+    def test_opt_in_broker_receipt_and_queued_request(self):
+        self.opt_in()
+        (self.run_dir / "gate-active.json").write_text("{}")
+        self.assertEqual(self.collect()[0]["state"], "QUEUED")
+        (self.run_dir / "gate-active.json").unlink()
+        out, result = self.request()
+        self.assertEqual(out.returncode, 0, result)
+        self.handoff(result)
+        self.assertEqual(self.collect()[0]["state"], "DONE")
+        self.assertIsNone(self.stop("codex"))
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+        with self.config.open("a") as stream:
+            stream.write("# changed verifier configuration\n")
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertEqual(self.stop("codex"), "block")
+
+    def test_opt_in_separate_required_check_cannot_hide_behind_green_t1(self):
+        self.opt_in()
+        out, result = self.request()
+        self.assertEqual(out.returncode, 0, result)
+        self.handoff(result)
+        with self.config.open("a") as stream:
+            stream.write('SW_PREHANDOFF_CMD="exit 7"\n')
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertEqual(self.stop("codex"), "block")
+        out, refused = self.request(rid="separate")
+        self.assertNotEqual(out.returncode, 0, refused)
+        self.assertEqual(refused["result"], "NOT_RUN")
+
+    def test_opt_in_required_verifier_failure_blocks_review_despite_pass_marker(self):
+        self.opt_in()
+        self.verifier("echo RESULT=pass\nexit 7")
+        out, result = self.request()
+        self.assertNotEqual(out.returncode, 0, result)
+        self.assertEqual((result["result"], result["exit_code"]), ("fail", 7))
+        self.handoff(result)
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.assertEqual(self.stop("codex"), "block")
+
+    def test_opt_in_direct_invalid_evidence_cannot_enter_review(self):
+        self.opt_in()
+        result = self.direct_gate(self.base)
+        self.handoff(result)
+        row = json.loads(self.tiers.read_text())
+        for change in (
+            {"exit_code": 3}, {"result": "NOT_RUN"}, {"state": "NOT_RUN"}, {"head_full": "a" * 40},
+            {"command": "different-verifier t1"}, {"log_sha256": "a" * 64},
+            {"accepted_base": "a" * 40}, {"inputs": {}},
+        ):
+            with self.subTest(change=change):
+                self.tiers.write_text(json.dumps({**row, **change}) + "\n")
+                self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        self.tiers.unlink()
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+
+    def test_opt_in_ambiguous_identity_keeps_legacy_check_and_hold(self):
+        self.opt_in()
+        result = self.direct_gate(self.base)
+        self.handoff(result)
+        other = "alloc-slice-07-r2"
+        self.alloc(other, {"role": "slice-implementer", "worktree": str(self.wt),
+                           "branch": "slice/07", "state": "open"})
+        for adapter in ("codex", "claude"):
+            self.assertIsNone(self.stop(adapter))
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"] * 3)
+        self.assertTrue(all(item["state"] != "DONE" for item in self.collect()))
+        (self.root / "docs/process/allocations" / (other + ".json")).unlink()
+        marker = self.wt / ".blocked"
+        marker.write_text("HOLD waiting\n")
+        self.verifier("exit 8")
+        self.assertEqual(self.stop("codex"), "block")
+        self.assertEqual(self.collect()[0]["state"], "HOLD")
 
     def test_expect_passed_rejects_zero_wrong_skipped_and_incomplete_observations(self):
         start = {"Action": "start", "Package": "p"}

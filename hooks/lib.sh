@@ -51,7 +51,7 @@ sw_load_config() {
   SW_INTEGRATION_BRANCH="main"; SW_SLICE_BRANCH_PREFIX="slice/"; SW_WORKTREE_ROOT=".claude/worktrees"
   SW_VERIFY_CMD="scripts/dev/verify-slice.sh"; SW_T0_ARGS="t0"
   SW_PLUGIN_HOOKS=on; SW_CODEX_BIN=codex; SW_CODEX_NETWORK=0
-  SW_PREHANDOFF_CMD=""
+  SW_PREHANDOFF_CMD=""; SW_VERIFY_CADENCE=turn
   SW_WEEKLY_DISPATCH_HOLD=80; SW_WEEKLY_STOP=85; SW_FIVE_HOUR_DISPATCH_HOLD=90; SW_FIVE_HOUR_STOP=100
   SW_READING_MAX_AGE=5400; SW_OWNER_SHARE_PCT=15
   SW_EXPLORER_AGENTS="Explore Plan claude-code-guide code-explorer sliceworks:code-explorer"

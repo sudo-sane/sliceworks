@@ -96,6 +96,11 @@ A review pass approves **source**. A green preparation check establishes a **pre
 
 Infrastructure, process and fix work is allocated with `unblocks`: the product rows it serves. It blocks those rows and nothing else; independent source work, pure checks, reviews and verification in a supported environment continue meanwhile. The ready detector prefers allocations that advance product rows, and the retrospective reads product rows passing next to tooling rows passing, because the first run spent review rounds on a baseline consolidation while independently executable product work stayed parked.
 
+In [candidate cadence](05-verification.md#candidate-cadence), a stopped worker without a
+handoff can resume the same allocation. A still-live check keeps its existing handle.
+A candidate handoff is committed on the exact checked source or as a child commit containing
+only the handoff. Resume and reviewer dispatch use the collector's exact result.
+
 ## Bounded repair
 
 A failing round names the obstruction, preserves its result and log, and issues one

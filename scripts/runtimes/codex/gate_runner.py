@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from safe_git import git_command
-from verification_source import (accepted_base, coverage_path, cumulative_changes,
+from verification_source import (accepted_base, candidate_command, candidate_policy, coverage_path, cumulative_changes,
                                  file_digest, gate_artifacts_match, last_result,
                                  require_ancestor, require_sealed_checkout)
 
@@ -106,7 +106,11 @@ def run(aid):
         require_sealed_checkout(wt, req['head'])
         if (root / os.environ['SW_STOP_FILE']).exists():
             raise ValueError('STOP kill switch present')
+        policy = candidate_policy(root)
         if saved is not None:
+            if policy and (saved.get('inputs') != policy[1]
+                           or saved.get('command') != candidate_command(policy[0], wt, alloc)):
+                raise ValueError('saved gate used a different candidate verification policy')
             if not gate_artifacts_match(saved, run_dir, rid):
                 raise ValueError('saved gate artifacts are incomplete or changed; use a new request_id')
             result = {**saved, 'delivery': 'replayed'}
@@ -121,7 +125,11 @@ def run(aid):
         with paths.open('xb') as out:
             out.write(manifest)
         log = run_dir / ('gate-' + rid + '.log')
-        command = [str(verify), '--cwd', str(wt), '--slice', req['slice'], '--base', base, 't1']
+        command = candidate_command(str(verify), wt, alloc)
+        if policy:
+            if str(verify) != policy[0]:
+                raise ValueError('candidate verifier differs from the project policy')
+            result['inputs'] = policy[1]
         result.update(command=command, log=str(log), delivery='fresh',
                       coverage=str(paths), coverage_sha256=hashlib.sha256(manifest).hexdigest())
         # Slot admission and every check remain the project verifier's responsibility.
@@ -149,6 +157,8 @@ def run(aid):
             result.update(result='fail', error=f'verifier exit {child.returncode}, RESULT={marker or "missing"}')
         try:
             require_sealed_checkout(wt, req['head'])
+            if policy and candidate_policy(root) != policy:
+                raise ValueError('candidate verification policy changed during the run')
             if paths.is_symlink() or paths.read_bytes() != manifest:
                 raise ValueError('cumulative changes manifest changed')
         except (ValueError, OSError, subprocess.CalledProcessError) as exc:

@@ -12,6 +12,28 @@
 
 The tier *structure* is the method's; the *commands* behind each tier are the project's, declared in its configuration. Affected units are computed, never classified by hand: a project supplies a "changed paths to test targets" function (reverse-dependency closure for T2 and T3, direct importers for T1).
 
+## Candidate cadence
+
+The default `SW_VERIFY_CADENCE=turn` keeps the T0 Stop hook and T1 candidate gate. A project
+can explicitly adopt `SW_VERIFY_CADENCE=candidate` to complete one observable slice before
+one coordinated verification and review cycle. Keep ordinary edits in the same allocation.
+Use an earlier checkpoint when a named unresolved question needs a narrower control.
+
+Before opting in, configure the trusted project T1 verifier to run the entire candidate check
+set, including the checks otherwise run as T0 or pre-handoff. Move any separate custom
+`SW_PREHANDOFF_CMD` into that verifier and unset the separate setting. The opt-in refuses
+candidate proof for a project with that separate command. A verifier must return a genuine
+pass only when all applicable required checks ran and passed. Keep the project's integration
+and milestone gates at their existing points.
+
+At an intermediate worker stop, a uniquely registered active allocation may continue without
+a full verification or any review admission. HOLD keeps its normal checks. On one exact
+completed candidate, make the first connected control the start of the verification cycle.
+The collector admits review only from a committed handoff and exact direct or brokered
+evidence. A handoff-only child commit carries the evidence pointer; the source in the
+evidence is the reviewed revision. The [runtime adapter](../scripts/runtimes/codex/README.md#completed-candidate-cadence)
+specifies the exact receipts and applies the same collection rules to direct verification.
+
 ## Preparation and first behavior evidence
 
 Pin the accepted integration base and the committed candidate. Select the project's cheap
@@ -40,7 +62,7 @@ pinned source and have disjoint outputs and fixtures.
 - Tests are never removed or weakened to pass. A changed oracle needs a positive control and a demonstrated rejection of the intended broken behavior.
 - A skipped check is `NOT_RUN`, never a pass. Source or compile evidence never certifies unexecuted behavior against a real dependency.
 - Isolation and access-control tests are never relaxed.
-- Review never runs before T1 is green.
+- Review never runs before the configured T1 is green. In candidate cadence, the collector must report `DONE` for the exact handoff first.
 - Every run writes one log under the outputs directory and one row to `metrics/tiers.jsonl`, and prints `RESULT=pass|fail` and `LOG=<path>` as its last lines.
 - A candidate rebases onto the integration head before review when the head changed a file the slice also changed; a merge checks pinned submodules or gitlinks against the head.
 

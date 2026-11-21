@@ -2,6 +2,8 @@
 
 ## Review
 
+On candidate cadence, review starts from the collector's `DONE` for the exact checked source. A chat message and an intermediate worker stop are recovery pointers.
+
 Provide the accepted base, candidate SHA, brief, cumulative preparation and T1 evidence,
 and early healthy and adverse observations or their `NOT_RUN` reasons. The reviewer works
 from the diff in a fresh context and reads surrounding code only to verify a finding.

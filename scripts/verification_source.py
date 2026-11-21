@@ -11,6 +11,7 @@ import re
 import subprocess
 
 from safe_git import git_command
+from survey import read_config
 
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
@@ -78,6 +79,29 @@ def file_digest(path):
         for chunk in iter(lambda: stream.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def candidate_policy(root):
+    """Resolve the one coordinator-configured verifier for this opt-in cadence."""
+    cfg = read_config(root) or {}
+    if cfg.get("SW_VERIFY_CADENCE") != "candidate":
+        return None
+    command = cfg.get("SW_VERIFY_CMD", "scripts/dev/verify-slice.sh")
+    t0 = cfg.get("SW_T0_ARGS", "t0")
+    if cfg.get("SW_PREHANDOFF_CMD", "") not in ("", f"{command} {t0}"):
+        raise ValueError("candidate cadence requires moving the separate pre-handoff check into the configured T1")
+    verify = (root / command).resolve()
+    if not verify.is_relative_to(root) or not verify.is_file() or not os.access(verify, os.X_OK):
+        raise ValueError("configured main-checkout verifier is unavailable")
+    return str(verify), {
+        "config_sha256": file_digest(root / ".sliceworks" / "config.env"),
+        "verifier_sha256": file_digest(verify),
+    }
+
+
+def candidate_command(verifier, worktree, allocation):
+    return [verifier, "--cwd", str(worktree.resolve()), "--slice", allocation["slice"],
+            "--base", allocation["base"], "t1"]
 
 
 def last_result(path):

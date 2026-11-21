@@ -24,7 +24,7 @@ A demo run that fails more than one scenario holds the next increment until the 
 | `proposed` | listed in the backlog | coordinator |
 | `ready` | Definition of Ready passed; brief written | coordinator |
 | `active` | implementer dispatched with the brief and the goal condition | coordinator |
-| `candidate` | `CANDIDATE` returned; T1 green at that SHA | implementer |
+| `candidate` | T1 green at that SHA; under candidate cadence the collector confirms the exact committed handoff | implementer / collector |
 | `in_review` | reviewer spawned | coordinator |
 | `repair` | findings sent; implementer resumed | implementer |
 | `merged` | merged by SHA; T2 running | coordinator |
@@ -41,8 +41,8 @@ Definition of Done: T1 green, review pass (and named-risk pass when applicable),
 
 1. Orient: recent log in the worktree, the tail of `PROGRESS.md`, the brief, its ledger rows.
 2. Environment: the project's init command; confirm the baseline smoke passes. A broken baseline is the first thing to fix.
-3. Take the highest-priority row with `passes: false`. Implement only that one. Reuse existing code; ask an explorer when unsure.
-4. Run T0 until green (the Stop hook blocks the turn otherwise).
+3. Under the default cadence, take the highest-priority row with `passes: false`. Under candidate cadence, collect the related rows that deliver the slice outcome. Reuse existing code; ask an explorer when unsure.
+4. Follow the configured [cadence](05-verification.md#candidate-cadence). Under the default cadence, make T0 green before the turn ends. Under candidate cadence, keep intermediate edits in the allocation until the complete slice is ready.
 5. Commit; append one dated paragraph to `PROGRESS.md`; add a `FRICTION:` line if a manual step was repeated or a wait occurred.
 6. When the goal condition holds, rebase if the integration head changed a file the slice also changed, run T1, return `CANDIDATE`.
 7. Resumed with `FINDINGS`: repair in scope, run T1, return `CANDIDATE` again.

@@ -19,6 +19,20 @@ if [ -f "$root/.blocked" ] && [ -f "$root/.prehandoff-unavailable.json" ]; then
   case "$log" in /*) ;; *) log="$root/$log";; esac
   if [ "$unavailable" = "$SW_PREHANDOFF_CMD" ] && [ -s "$log" ] && grep -qF "HOLD" "$root/.blocked" && grep -qF "$unavailable" "$root/.blocked"; then exit 0; fi
 fi
+# In the opt-in, the collector distinguishes an intermediate return from a
+# completed candidate. A HOLD or an unresolved allocation uses the old checks.
+candidate_stop=LEGACY
+if [ "$SW_VERIFY_CADENCE" = candidate ] && [ ! -f "$root/.blocked" ]; then
+  candidate_stop="$(PYTHONDONTWRITEBYTECODE=1 python3 "$(dirname "$0")/../scripts/collect.py" \
+    --root "$SW_ROOT" --state-dir "$SW_STATE_DIR" --candidate-stop "$root" \
+    --allocation "${SW_ALLOCATION:-}" 2>/dev/null)" || candidate_stop=LEGACY
+  case "$candidate_stop" in
+    DONE|STOPPED-NO-HANDOFF|STALE-HANDOFF|BLOCKED) exit 0;;
+    CANDIDATE-UNVERIFIED)
+      jq -n '{decision:"block", reason:"Candidate lacks exact evidence from the configured verifier. Collect or fix its handoff before review."}'
+      exit 0;;
+  esac
+fi
 # Preserve the legacy unconfigured-project behavior only for the default T0 command.
 script="$root/$SW_VERIFY_CMD"; [ -x "$script" ] || script="$SW_ROOT/$SW_VERIFY_CMD"
 if [ "$SW_PREHANDOFF_CMD" = "$SW_VERIFY_CMD $SW_T0_ARGS" ] && [ ! -x "$script" ]; then
@@ -38,6 +52,7 @@ if [ "$status" -ne 0 ]; then
 fi
 # A HOLD may defer its database gate after this pass. A candidate still owes the original T0 gate.
 [ -f "$root/.blocked" ] && exit 0
+[ "$candidate_stop" = HOLD ] && exit 0
 if [ "$SW_PREHANDOFF_CMD" != "$SW_VERIFY_CMD $SW_T0_ARGS" ] && [ -x "$script" ]; then
   out="$(cd "$root" && "$script" $SW_T0_ARGS 2>&1)"; status=$?
   if [ "$status" -ne 0 ]; then
