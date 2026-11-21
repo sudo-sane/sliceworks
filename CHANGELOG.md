@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+- **Candidate cadence.** Set `SW_VERIFY_CADENCE=candidate` for workers started by the
+  isolated Codex CLI launcher. Intermediate stops can continue in the same allocation.
+  The completed slice goes through one configured T1 that covers the full candidate
+  check set. Existing projects and native subagents use turn cadence.
+- **Review admission.** The collector requires a committed handoff, a matching isolated
+  launch record, and the latest host gate result for the exact candidate. Failed or
+  unavailable retries supersede earlier passes. Replays and imported telemetry do not
+  establish a new execution. The writer stays open through review and findings repair.
+- **Adoption.** Fold any separate pre-handoff checks into the complete T1 before
+  enabling the mode. See the [Codex adapter](scripts/runtimes/codex/README.md#completed-candidate-cadence)
+  for the launcher, receipt and verification requirements.
+
 ## 0.9.0
 
 - **Cumulative preparation.** Pin the accepted base and candidate commit. The project's
