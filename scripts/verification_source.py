@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import uuid
 
 from safe_git import git_command
 from survey import read_config
@@ -102,9 +103,36 @@ def candidate_policy(root):
 def uses_candidate_cadence(allocation, config):
     worker = allocation.get("worker") or {}
     return (config.get("SW_VERIFY_CADENCE") == "candidate"
-            and isinstance(worker, dict) and worker.get("runtime") == "codex"
+            and isinstance(worker, dict) and worker.get("kind") == "cli"
+            and worker.get("runtime") == "codex"
             and allocation.get("role", "").split(":")[-1] == "slice-implementer"
             and allocation.get("mode", "full") == "full")
+
+
+def atomic_json(path, data):
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    temporary.write_text(json.dumps(data) + "\n")
+    temporary.replace(path)
+
+
+def candidate_host_file(root, allocation_id, name):
+    common = root / ".git"
+    path = common / "sliceworks-candidate-gates" / allocation_id / name
+    if path.resolve() != path or not path.is_relative_to(common):
+        raise ValueError("candidate records must be in host-owned Git metadata")
+    return path
+
+
+def candidate_launch_identity(worktree, allocation):
+    return {"allocation": allocation["id"], "slice": allocation["slice"],
+            "worktree": str(worktree.resolve()), "branch": allocation["branch"],
+            "base": allocation["base"], "accepted_base": accepted_base(allocation)}
+
+
+def require_candidate_launch(root, worktree, allocation):
+    path = candidate_host_file(root, allocation["id"], "launch.json")
+    if not path.is_file() or json.loads(path.read_text()) != candidate_launch_identity(worktree, allocation):
+        raise ValueError("candidate cadence requires a matching isolated CLI launch")
 
 
 def candidate_gate_record(root, expected):
@@ -112,11 +140,7 @@ def candidate_gate_record(root, expected):
     fields = ("head", "base", "accepted_base", "allocation", "slice", "worktree", "tier")
     identity = {field: expected[field] for field in fields}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    common = root / ".git"
-    path = common / "sliceworks-candidate-gates" / identity["allocation"] / (key + ".json")
-    if path.resolve() != path or not path.is_relative_to(common):
-        raise ValueError("candidate gate record must be in host-owned Git metadata")
-    return path
+    return candidate_host_file(root, identity["allocation"], key + ".json")
 
 
 def candidate_command(verifier, worktree, allocation):

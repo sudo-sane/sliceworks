@@ -18,7 +18,7 @@ from safe_git import git_command
 from survey import read_config
 from verification_source import (FULL_SHA, accepted_base, candidate_command, candidate_gate_record,
                                  candidate_policy, gate_artifacts_match, last_result, require_ancestor,
-                                 require_sealed_checkout, uses_candidate_cadence)
+                                 require_candidate_launch, require_sealed_checkout, uses_candidate_cadence)
 
 
 def git(cwd, *args):
@@ -282,6 +282,7 @@ def candidate_stop(root, state_dir, wt, run_dir, allocation_id):
             return "LEGACY"
         if matches[0].get("state") != "open" or matches[0]["id"] != allocation_id:
             return "LEGACY"
+        require_candidate_launch(root, wt, matches[0])
         state, _ = candidate_handoff(root, state_dir, matches[0], wt, run_dir)
         if state in ("STOPPED-NO-HANDOFF", "STALE-HANDOFF"):
             candidate_policy(root)
@@ -310,6 +311,7 @@ def assess(root, state_dir, alloc, run_dir=".run", candidate_config=None):
             ids = [item["id"] for item in candidate_allocations(root, state_dir, wt.resolve(), candidate_config)]
             if ids != [alloc["id"]]:
                 return "CANDIDATE-UNVERIFIED", "candidate requires one matching registered allocation"
+            require_candidate_launch(root, wt, alloc)
             gate_dir = root / run_dir / "codex" / alloc["id"]
             if any((gate_dir / name).exists() for name in ("gate-request.json", "gate-active.json", "gate.lock")):
                 return "QUEUED", "host gate request awaits completion or reconciliation"

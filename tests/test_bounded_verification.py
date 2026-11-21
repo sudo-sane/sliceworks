@@ -217,12 +217,15 @@ exit 17
         self.commit()
         self.assertEqual(self.collect()[0]["state"], "STALE-HANDOFF")
 
-    def opt_in(self, extra=""):
+    def opt_in(self, extra="", launch=True):
         self.config = self.root / ".sliceworks/config.env"
         with self.config.open("a") as stream:
             stream.write("SW_VERIFY_CADENCE=candidate\n" + extra)
         self.counter = self.root / "gate-invocations"
         self.verifier(f"echo run >> {shlex.quote(str(self.counter))}\necho RESULT=pass")
+        if launch:
+            out = self.dispatch(AID, "--wait")
+            self.assertEqual(out.returncode, 0, out.stderr)
 
     def stop(self, adapter, allocation=AID):
         event = {"cwd": str(self.wt), "stop_hook_active": False}
@@ -348,7 +351,7 @@ exit 17
         self.opt_in()
         result = self.direct_gate(self.base)
         staged = self.run_dir / "metrics" / "tiers.jsonl"
-        staged.parent.mkdir(parents=True)
+        staged.parent.mkdir(parents=True, exist_ok=True)
         self.tiers.replace(staged)
         self.handoff(result)
         self.assertEqual(self.stop("codex"), "block")
@@ -403,8 +406,45 @@ exit 17
         self.handoff(current)
         self.assertEqual(self.collect()[0]["state"], "DONE")
 
+    def test_opt_in_admits_only_an_observed_isolated_cli_launch(self):
+        self.opt_in(launch=False)
+        record = self.root / ".git/sliceworks-candidate-gates" / AID / "launch.json"
+        for dry in (False, True):
+            if dry:
+                out = self.dispatch(AID, "--dry-run")
+                self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertFalse(record.exists())
+            self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+        out, unlaunched = self.request(rid="unlaunched")
+        self.assertNotEqual(out.returncode, 0, unlaunched)
+        self.assertEqual(unlaunched["result"], "NOT_RUN")
+        self.assertFalse(self.counter.exists())
+        out = self.dispatch(AID, "--wait")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        observed = json.loads(record.read_text())
+        self.assertEqual(observed["worktree"], str(self.wt))
+        self.assertEqual(observed["base"], self.base)
+        self.assertEqual(self.collect()[0]["state"], "STOPPED-NO-HANDOFF")
+        out, result = self.request(rid="launched")
+        self.assertEqual(out.returncode, 0, result)
+        self.handoff(result)
+        self.assertEqual(self.collect()[0]["state"], "DONE")
+        self.set_allocation(accepted_base="a" * 40)
+        self.assertEqual(self.collect()[0]["state"], "CANDIDATE-UNVERIFIED")
+
+    def test_opt_in_keeps_native_codex_on_turn_checks(self):
+        self.opt_in(launch=False)
+        self.set_allocation(worker={"kind": "subagent", "runtime": "codex"})
+        self.assertIsNone(self.stop("codex"))
+        self.assertEqual(self.counter.read_text().splitlines(), ["run"])
+        self.assertNotIn("cadence", self.collect()[0])
+        out, result = self.request(rid="legacy-native")
+        self.assertEqual(out.returncode, 0, result)
+        self.assertNotIn("inputs", result)
+        self.assertFalse((self.root / ".git/sliceworks-candidate-gates").exists())
+
     def test_opt_in_keeps_native_claude_on_turn_checks(self):
-        self.opt_in()
+        self.opt_in(launch=False)
         self.set_allocation(worker={"kind": "subagent", "runtime": "claude"})
         self.assertIsNone(self.stop("claude"))
         self.assertEqual(self.counter.read_text().splitlines(), ["run"])

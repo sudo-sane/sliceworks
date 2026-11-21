@@ -11,20 +11,14 @@ import re
 import shlex
 import subprocess
 import time
-import uuid
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from safe_git import git_command
-from verification_source import (accepted_base, candidate_command, candidate_gate_record, candidate_policy,
-                                 coverage_path, cumulative_changes, file_digest, gate_artifacts_match,
-                                 last_result, require_ancestor, require_sealed_checkout, uses_candidate_cadence)
-
-
-def atomic_json(path, value):
-    tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    tmp.write_text(json.dumps(value) + '\n')
-    tmp.replace(path)
+from verification_source import (accepted_base, atomic_json, candidate_command, candidate_gate_record,
+                                 candidate_policy, coverage_path, cumulative_changes, file_digest,
+                                 gate_artifacts_match, last_result, require_ancestor, require_candidate_launch,
+                                 require_sealed_checkout, uses_candidate_cadence)
 
 
 def git(path, *args):
@@ -111,6 +105,7 @@ def run(aid):
         if uses_candidate_cadence(alloc, os.environ):
             if not alloc.get('branch'):
                 raise ValueError('candidate cadence requires the allocated branch')
+            require_candidate_launch(root, wt, alloc)
             host_record = candidate_gate_record(root, result)
             if saved is None:
                 host_record.parent.mkdir(parents=True, exist_ok=True)

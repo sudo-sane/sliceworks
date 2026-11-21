@@ -8,11 +8,32 @@ import sys
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from verification_source import atomic_json, candidate_host_file, candidate_launch_identity
+
 
 def main():
     aid, registry, *command = sys.argv[1:]
     reg = Path(registry)
+    isolated_candidate = os.environ.pop("SW_ISOLATED_CANDIDATE_ALLOC", "")
+    if isolated_candidate:
+        root = Path(os.environ["CLAUDE_PROJECT_DIR"]).resolve()
+        allocation = json.loads(Path(isolated_candidate).read_text())
+        if allocation["id"] != aid:
+            raise ValueError("isolated launch allocation mismatch")
+        launch_record = candidate_host_file(root, aid, "launch.json")
+        launch_identity = candidate_launch_identity(Path.cwd(), allocation)
+
     child = subprocess.Popen(command, stdout=subprocess.PIPE, bufsize=0)
+    if isolated_candidate:
+        try:
+            launch_record.parent.mkdir(parents=True, exist_ok=True)
+            atomic_json(launch_record, launch_identity)
+        except OSError:
+            child.terminate()
+            child.wait()
+            raise
+
     def stream():
         for line in child.stdout:
             sys.stdout.buffer.write(line)

@@ -128,8 +128,13 @@ gd="$(sw_git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
 case "$gd" in "$SW_ROOT/.git"|'') ;; *) printf '%s\n' "$role" > "$gd/sliceworks-role";; esac
 printf '%s\n' "$base.jsonl" > "$SW_ROOT/$SW_RUN_DIR/codex/$id.log"
 echo $$ >"$pidf"; echo $$ >"$SW_ROOT/$SW_RUN_DIR/codex/$id.pid"; rm -f "${pidf%.pid}.writer"; [ "$sandbox" = read-only ] || : > "${pidf%.pid}.writer"
+isolated_candidate=""; mode="$(a .mode)"
+if [ "$SW_VERIFY_CADENCE" = candidate ] && [ "$sandbox" = workspace-write ] && [ "$role" = slice-implementer ] \
+  && [ "${mode:-full}" = full ] && [ "$(a .worker.kind)" = cli ] && [ "$(a .worker.runtime)" = codex ]; then
+  isolated_candidate="$alloc"
+fi
 status=0
-( cd "$wt" && SW_ROLE="$role" SW_RUNTIME=codex SW_ALLOCATION="$id" SW_PREHANDOFF_CMD="$SW_PREHANDOFF_CMD" SW_VERIFY_CMD="$SW_VERIFY_CMD" SW_T0_ARGS="$SW_T0_ARGS" SW_CODEX_RUN_DIR="$run" SW_METRICS_DIR="$metrics" SW_TIERS_FILE="$metrics/tiers.jsonl" CLAUDE_PROJECT_DIR="$SW_ROOT" exec python3 "$here/worker.py" "$id" "$SW_ROOT/$SW_RUN_DIR/codex" "$SW_CODEX_BIN" "$@" "$prompt" ) </dev/null >"$base.jsonl" 2>"$base.err" || status=$?
+( cd "$wt" && SW_ISOLATED_CANDIDATE_ALLOC="$isolated_candidate" SW_ROLE="$role" SW_RUNTIME=codex SW_ALLOCATION="$id" SW_PREHANDOFF_CMD="$SW_PREHANDOFF_CMD" SW_VERIFY_CMD="$SW_VERIFY_CMD" SW_T0_ARGS="$SW_T0_ARGS" SW_CODEX_RUN_DIR="$run" SW_METRICS_DIR="$metrics" SW_TIERS_FILE="$metrics/tiers.jsonl" CLAUDE_PROJECT_DIR="$SW_ROOT" exec python3 "$here/worker.py" "$id" "$SW_ROOT/$SW_RUN_DIR/codex" "$SW_CODEX_BIN" "$@" "$prompt" ) </dev/null >"$base.jsonl" 2>"$base.err" || status=$?
 printf '%s %s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$base.done"
 # The marker names the role only while its worker runs; a later command of the coordinator in this worktree is the coordinator's.
 case "$gd" in "$SW_ROOT/.git"|'') ;; *) rm -f "$gd/sliceworks-role";; esac

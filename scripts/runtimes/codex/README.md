@@ -142,8 +142,9 @@ worktree. It records the exact command and hashes of the current project configu
 verifier in `inputs.config_sha256` and `inputs.verifier_sha256`. An existing standalone
 `SW_PREHANDOFF_CMD` must be moved into the complete verifier before opting in.
 
-Candidate cadence applies to full Codex allocations with `worker.runtime: codex`
-run by the isolated `dispatch.sh` process. Its supervisor services the existing gate
+Candidate cadence applies to full Codex allocations with `worker.kind: cli` and
+`worker.runtime: codex` run by the isolated `dispatch.sh` process. The host supervisor
+records the matching launch after it starts the CLI. It services the existing gate
 request while the source is sealed. The worker publishes the handoff after observing
 the receipt. The writer's configured grants exclude the host receipt directory.
 Native Claude uses turn cadence. A runtime without verified separate host custody must
